@@ -2,3 +2,6 @@ TikTokLive
 requests
 aiohttp
 websockets
+telethon
+streamlink
+ffmpeg-python
