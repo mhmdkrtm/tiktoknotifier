@@ -12,35 +12,30 @@ BOT_TOKEN  = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
 CHAT_ID    = "1280121045"
 SESSION    = "tg_session"
 
-# working directory
-TMP_DIR         = "/tmp/tiktok_segments"     # auto-created at runtime
-SEGMENT_TIME    = 30                         # seconds per chunk (testing)
-CHECK_OFFLINE   = 60                         # seconds between offline checks
-NOTIFY_COOLDOWN = 600                        # seconds between notifications (10 min)
+TMP_DIR         = "/tmp/tiktok_segments"   # automatic folder
+CHECK_OFFLINE   = 60                       # seconds between checks when offline
+NOTIFY_COOLDOWN = 600                      # 10 min cooldown for live message
 USERS_FILE      = "users.txt"
 
-# create folder if missing
 os.makedirs(TMP_DIR, exist_ok=True)
-
-# telegram client for uploads
 tg_client = TelegramClient(SESSION, API_ID, API_HASH)
 last_notification_time = {}  # per-user cooldown tracking
 
 # =====================================================
 def send_bot_msg(text: str):
-    """Send Telegram bot text message."""
+    """Send Telegram text message via bot API."""
     try:
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             json={"chat_id": CHAT_ID, "text": text},
-            timeout=10
+            timeout=10,
         )
     except Exception as e:
         print("⚠️ Telegram send failed:", e)
 
 # =====================================================
 async def upload_segments(username):
-    """Continuously upload new video chunks to Saved Messages."""
+    """Continuously upload any new MP4s to Saved Messages."""
     seen = set()
     while True:
         for f in sorted(os.listdir(TMP_DIR)):
@@ -51,43 +46,52 @@ async def upload_segments(username):
                     async with tg_client:
                         await tg_client.send_file(
                             "me", path,
-                            caption=f"🎬 @{username} — {time.strftime('%H:%M:%S')}"
+                            caption=f"🎬 @{username} — {time.strftime('%H:%M:%S')}",
                         )
                     print(f"☁️ Uploaded & deleted {f}")
                 except Exception as e:
                     print("❌ Upload failed:", e)
                 finally:
-                    try:
-                        os.remove(path)
-                    except Exception:
-                        pass
+                    try: os.remove(path)
+                    except Exception: pass
         await asyncio.sleep(10)
 
 # =====================================================
 def record_with_ytdlp(username):
-    """Record TikTok live with yt-dlp only."""
-    print(f"🎥 Recording @{username} via yt-dlp…")
-    out_pattern = os.path.join(TMP_DIR, f"{username}_%(timestamp)s.%(ext)s")
-    cmd = [
-        "yt-dlp",
-        f"https://www.tiktok.com/@{username}/live",
-        "-o", out_pattern,
-        "--hls-use-mpegts",
-        "--no-part",
-        "--no-warnings",
-        "--no-live-from-start",
-        "--max-filesize", "500M",
-    ]
-    try:
-        subprocess.call(cmd)
-    except Exception as e:
-        print(f"❌ yt-dlp recording error for @{username}: {e}")
-        send_bot_msg(f"⚠️ yt-dlp failed for @{username}")
-    print(f"🛑 yt-dlp stopped for @{username}")
+    """
+    Continuous yt-dlp recorder that waits until live, retries, and records
+    at ≤ 720 p — mirrors the Windows .bat script behavior.
+    """
+    print(f"🎥 Monitoring & recording @{username} via yt-dlp…")
+    while True:
+        out_pattern = os.path.join(
+            TMP_DIR, f"{username}_%(upload_date)s_%(timestamp)s.%(ext)s"
+        )
+
+        cmd = [
+            "yt-dlp",
+            f"https://www.tiktok.com/@{username}/live",
+            "--wait-for-video", "60",                     # ⏳ retry every 60 s
+            "-f", "bestvideo[height<=720]+bestaudio/best",# 🎞️ max 720 p
+            "-o", out_pattern,
+            "--no-part",
+            "--hls-use-mpegts",
+            "--no-warnings",
+            "--no-live-from-start",
+            "--max-filesize", "500M",
+        ]
+        try:
+            subprocess.call(cmd)
+            print(f"🔁 Restarting recorder for @{username} in 30 s…")
+            time.sleep(30)
+        except Exception as e:
+            print(f"❌ yt-dlp error for @{username}: {e}")
+            send_bot_msg(f"⚠️ yt-dlp error for @{username}: {e}")
+            time.sleep(60)
 
 # =====================================================
 async def watch_user(username):
-    """Monitor TikTok user → notify once → record & upload."""
+    """Monitor one TikTok user → notify → record & upload."""
     client = TikTokLiveClient(unique_id=username)
     recording_task = None
     uploader_task = None
@@ -99,7 +103,7 @@ async def watch_user(username):
         now = time.time()
         last_time = last_notification_time.get(username, 0)
 
-        # send only once per cooldown window
+        # send one message per cooldown period
         if now - last_time > NOTIFY_COOLDOWN:
             send_bot_msg(f"🔴 @{username} is LIVE!")
             last_notification_time[username] = now
@@ -116,7 +120,7 @@ async def watch_user(username):
     async def on_disconnect(_):
         print(f"[ℹ️] @{username} disconnected — waiting for next live.")
 
-    # main loop with ping_loop bug suppression
+    # keep connection alive, swallow ping_loop bug
     while True:
         try:
             await client.start()
