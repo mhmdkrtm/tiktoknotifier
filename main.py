@@ -5,8 +5,8 @@ from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, DisconnectEvent
 
 # ========= CONFIG =========
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")  # keep these in Railway vars
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")  or "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"# keep these in Railway vars
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "1280121045"
 USERS_FILE = "users.txt"
 
 GRACE_PERIOD = 45  # seconds to wait after a disconnect before we "arm" next-live notification
