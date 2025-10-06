@@ -7,6 +7,89 @@ from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, DisconnectEvent
 from telethon import TelegramClient
 
+# --- ADD THIS NEW CONSTANT AT THE TOP OF YOUR FILE ---
+MAX_RECONNECT_ATTEMPTS = 5
+RECONNECT_WAIT_SECONDS = 15 
+# ----------------------------------------------------
+
+def record_with_ytdlp(username):
+    """
+    Synchronous function called by an executor. 
+    It loops to record 10-minute segments until the 'is_recording_active' flag is False,
+    now with enhanced termination and retry logic.
+    """
+    video_path = VIDEO_PATH_TEMPLATE.format(username=username)
+    os.makedirs(os.path.dirname(video_path), exist_ok=True)
+    tiktok_url = f"https://www.tiktok.com/@{username}/live"
+    segment_count = 0
+    consecutive_failures = 0 # New counter for retries
+    
+    if os.path.exists(video_path):
+        os.remove(video_path)
+
+    while is_recording_active.get(username, False) and consecutive_failures < MAX_RECONNECT_ATTEMPTS:
+        segment_count += 1
+        print(f"--- @{username}: Starting Segment {segment_count} ---")
+        
+        command = [
+            'yt-dlp',
+            '--no-playlist', 
+            '--live-from-start',
+            '-f', 'best',
+            '--hls-use-mpegts', # Often improves stability for live streams
+            '--output', video_path, 
+            tiktok_url
+        ]
+        
+        try:
+            # NOTE: We keep DEVNULL to avoid filling logs unless debugging
+            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            start_time = time.time()
+            while time.time() - start_time < SEGMENT_DURATION_SECONDS:
+                if not is_recording_active.get(username, False) or process.poll() is not None:
+                    break
+                time.sleep(1)
+            
+            # --- Robust Termination: Send SIGINT first to allow file flush ---
+            if process.poll() is None:
+                print("Segment recording timed out. Terminating process...")
+                process.send_signal(signal.SIGINT) # Gentle stop signal
+                
+                # Wait for the process to exit after the gentle signal
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # If it's still alive after 5 seconds, kill it hard
+                    process.kill()
+
+            # --- Check Result ---
+            if os.path.exists(video_path) and os.path.getsize(video_path) > 1024 * 10:
+                print(f"[✅] Segment recording succeeded. File size: {os.path.getsize(video_path) / (1024*1024):.2f}MB")
+                consecutive_failures = 0 # Reset failure count on success
+            else:
+                # --- Failure Logic: Retry instead of Exit ---
+                print(f"[⚠️] Recording failed or file too small for @{username}. Retrying...")
+                consecutive_failures += 1
+                if consecutive_failures < MAX_RECONNECT_ATTEMPTS:
+                    print(f"Waiting {RECONNECT_WAIT_SECONDS}s before re-initiation...")
+                    time.sleep(RECONNECT_WAIT_SECONDS)
+                    continue # Skip to next iteration
+                else:
+                    # Max retries reached, NOW we exit the main loop
+                    is_recording_active[username] = False
+            
+        except FileNotFoundError:
+            print("[❌] ERROR: 'yt-dlp' or 'ffmpeg' command not found. Fatal error.")
+            is_recording_active[username] = False
+            break
+        except Exception as e:
+            print(f"[!] @{username} General recording error: {e}. Retrying.")
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_RECONNECT_ATTEMPTS:
+                 is_recording_active[username] = False
+            
+    print(f"@{username} Recording loop stopped. (Failures: {consecutive_failures})")
 # ====================================================================
 # 1. DIRECT VARIABLE INSERTION (Customize these values) ⚠️
 # ====================================================================
