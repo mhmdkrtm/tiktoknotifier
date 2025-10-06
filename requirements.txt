@@ -1,4 +1,4 @@
-TikTokLive
+git+https://github.com/TikTokLiveIO/TikTokLive.git@main
 requests
 aiohttp
 websockets
