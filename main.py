@@ -3,7 +3,7 @@ import time
 import os
 import subprocess
 import signal
-from tiktok_live.client import TikTokLiveClient
+from TikTokLive import TikTokLiveClient
 from tiktok_live.events import ConnectEvent, DisconnectEvent
 from telethon import TelegramClient
 
