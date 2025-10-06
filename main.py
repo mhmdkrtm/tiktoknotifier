@@ -4,7 +4,7 @@ import os
 import subprocess
 import signal
 from TikTokLive import TikTokLiveClient
-from tiktok_live.events import ConnectEvent, DisconnectEvent
+from TikTokLive.events import ConnectEvent, DisconnectEvent
 from telethon import TelegramClient
 
 # ====================================================================
