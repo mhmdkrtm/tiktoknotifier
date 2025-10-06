@@ -1,4 +1,4 @@
-TikToklive
+tiktoklive
 requests
 aiohttp
 websockets
