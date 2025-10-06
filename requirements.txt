@@ -6,3 +6,4 @@ telethon
 streamlink
 ffmpeg-python
 yt-dlp
+imageio-ffmpeg
