@@ -18,7 +18,7 @@ TG_BOT_TOKEN = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"        # ⚠️ 
 MY_USER_ID = 1280121045            # ⚠️ YOUR PERSONAL CHAT ID (to send to Saved Messages)
 
 # --- General Config ---
-SEGMENT_DURATION_SECONDS = 10  # 10 minutes (600 seconds)
+SEGMENT_DURATION_SECONDS = 600  # 10 minutes (600 seconds)
 CHECK_OFFLINE = 30              # Seconds to wait when user is offline
 NOTIFY_COOLDOWN = 600           # Cooldown for live notifications (10 min)
 USERS_FILE = 'users.txt'        # File containing usernames
@@ -92,7 +92,7 @@ def record_with_ytdlp(username):
             
         except FileNotFoundError:
             print("[❌] ERROR: 'yt-dlp' or 'ffmpeg' command not found. Ensure they are installed on Railway!")
-is_recording_active[username] = False
+            is_recording_active[username] = False
             break
         except Exception as e:
             print(f"[!] @{username} Error during recording segment: {e}")
@@ -195,7 +195,7 @@ async def watch_user(username):
     @client.on(DisconnectEvent)
     async def on_disconnect(_):
         print(f"[ℹ️] @{username} disconnected — stopping tasks.")
-stop_tasks()
+        stop_tasks()
         
     while True:
         try:
@@ -250,7 +250,7 @@ async def main():
     
     await asyncio.gather(*(watch_user(u) for u in users))
 
-if name == "main":
+if __name__ == "__main__":
     def handle_sigterm(*args):
         print("\nSIGTERM received, shutting down...")
         
