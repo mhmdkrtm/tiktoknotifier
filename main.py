@@ -12,13 +12,13 @@ from telethon import TelegramClient
 # ====================================================================
 
 # --- Telegram Secrets (Insert Your Credentials Directly) ---
-TG_API_ID = 1234567               # ⚠️ YOUR TELEGRAM API ID (from my.telegram.org)
-TG_API_HASH = "YOUR_API_HASH"     # ⚠️ YOUR TELEGRAM API HASH
-TG_BOT_TOKEN = "BOT_TOKEN"        # ⚠️ YOUR TELEGRAM BOT TOKEN
-MY_USER_ID = 987654321            # ⚠️ YOUR PERSONAL CHAT ID (to send to Saved Messages)
+TG_API_ID = 20196111               # ⚠️ YOUR TELEGRAM API ID (from my.telegram.org)
+TG_API_HASH = "05b184f5623850b5666c32e14e7a888b"     # ⚠️ YOUR TELEGRAM API HASH
+TG_BOT_TOKEN = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"        # ⚠️ YOUR TELEGRAM BOT TOKEN
+MY_USER_ID = 1280121045            # ⚠️ YOUR PERSONAL CHAT ID (to send to Saved Messages)
 
 # --- General Config ---
-SEGMENT_DURATION_SECONDS = 600  # 10 minutes (600 seconds)
+SEGMENT_DURATION_SECONDS = 10  # 10 minutes (600 seconds)
 CHECK_OFFLINE = 30              # Seconds to wait when user is offline
 NOTIFY_COOLDOWN = 600           # Cooldown for live notifications (10 min)
 USERS_FILE = 'users.txt'        # File containing usernames
