@@ -5,3 +5,4 @@ websockets
 telethon
 streamlink
 ffmpeg-python
+yt-dlp
