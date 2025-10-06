@@ -12,18 +12,18 @@ BOT_TOKEN  = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
 CHAT_ID    = "1280121045"
 SESSION    = "tg_session"
 
-TMP_DIR         = "/tmp/tiktok_segments"   # automatic folder
-CHECK_OFFLINE   = 60                       # seconds between checks when offline
-NOTIFY_COOLDOWN = 600                      # 10 min cooldown for live message
+TMP_DIR         = "/tmp/tiktok_segments"
+CHECK_OFFLINE   = 60           # seconds between offline checks
+NOTIFY_COOLDOWN = 600          # 10 min between live notifications
 USERS_FILE      = "users.txt"
 
 os.makedirs(TMP_DIR, exist_ok=True)
 tg_client = TelegramClient(SESSION, API_ID, API_HASH)
-last_notification_time = {}  # per-user cooldown tracking
+last_notification_time = {}
 
 # =====================================================
 def send_bot_msg(text: str):
-    """Send Telegram text message via bot API."""
+    """Send Telegram bot text message."""
     try:
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
@@ -35,7 +35,7 @@ def send_bot_msg(text: str):
 
 # =====================================================
 async def upload_segments(username):
-    """Continuously upload any new MP4s to Saved Messages."""
+    """Continuously upload new MP4 files to Saved Messages."""
     seen = set()
     while True:
         for f in sorted(os.listdir(TMP_DIR)):
@@ -59,8 +59,8 @@ async def upload_segments(username):
 # =====================================================
 def record_with_ytdlp(username):
     """
-    Continuous yt-dlp recorder that waits until live, retries, and records
-    at ≤ 720 p — mirrors the Windows .bat script behavior.
+    Continuous yt-dlp recorder — waits until live, retries forever,
+    and ignores transient 404s like local ffmpeg.
     """
     print(f"🎥 Monitoring & recording @{username} via yt-dlp…")
     while True:
@@ -72,13 +72,18 @@ def record_with_ytdlp(username):
             "yt-dlp",
             f"https://www.tiktok.com/@{username}/live",
             "--wait-for-video", "60",                     # ⏳ retry every 60 s
-            "-f", "bestvideo[height<=720]+bestaudio/best",# 🎞️ max 720 p
+            "-f", "bestvideo[height<=720]+bestaudio/best",# 🎞️ max 720p
             "-o", out_pattern,
             "--no-part",
             "--hls-use-mpegts",
             "--no-warnings",
             "--no-live-from-start",
             "--max-filesize", "500M",
+            "--retries", "infinite",
+            "--fragment-retries", "20",
+            "--ignore-errors",                            # ✅ keep going on 404s
+            "--downloader-args",
+            "ffmpeg_i:-err_detect ignore_err -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10",
         ]
         try:
             subprocess.call(cmd)
@@ -91,7 +96,7 @@ def record_with_ytdlp(username):
 
 # =====================================================
 async def watch_user(username):
-    """Monitor one TikTok user → notify → record & upload."""
+    """Monitor TikTok user → notify → record → upload."""
     client = TikTokLiveClient(unique_id=username)
     recording_task = None
     uploader_task = None
@@ -103,7 +108,7 @@ async def watch_user(username):
         now = time.time()
         last_time = last_notification_time.get(username, 0)
 
-        # send one message per cooldown period
+        # 🔕 one notification per cooldown window
         if now - last_time > NOTIFY_COOLDOWN:
             send_bot_msg(f"🔴 @{username} is LIVE!")
             last_notification_time[username] = now
@@ -120,7 +125,7 @@ async def watch_user(username):
     async def on_disconnect(_):
         print(f"[ℹ️] @{username} disconnected — waiting for next live.")
 
-    # keep connection alive, swallow ping_loop bug
+    # loop, suppressing ping_loop bug
     while True:
         try:
             await client.start()
@@ -139,6 +144,9 @@ async def watch_user(username):
                 await asyncio.sleep(300)
             elif "userofflineerror" in err:
                 print(f"[ℹ️] @{username} offline — retry in {CHECK_OFFLINE}s.")
+                await asyncio.sleep(CHECK_OFFLINE)
+            elif "one connection per client" in err:
+                print(f"[ℹ️] @{username} already connected — skipping duplicate.")
                 await asyncio.sleep(CHECK_OFFLINE)
             else:
                 print(f"[!] @{username} error:", e)
