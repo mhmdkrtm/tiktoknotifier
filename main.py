@@ -27,67 +27,56 @@ def send_telegram(msg: str):
         print("❌ Telegram send failed:", e)
 
 
-async def monitor_user(username: str):
-    """Monitor one TikTok user for live status."""
+async def watch_user(username: str):
+    """Keep trying to connect to a user's live stream."""
     client = TikTokLiveClient(unique_id=username)
     live_announced = False
 
     @client.on(ConnectEvent)
     async def on_connect(event: ConnectEvent):
         nonlocal live_announced
-        print(f"[+] @{username} is LIVE (Room ID: {client.room_id})")
         if not live_announced:
             msg = f"🔴 @{username} is now LIVE!\nhttps://www.tiktok.com/@{username}/live"
             send_telegram(msg)
             live_announced = True
+        print(f"[+] Connected to @{username}")
 
     @client.on(DisconnectEvent)
     async def on_disconnect(event: DisconnectEvent):
         nonlocal live_announced
         if live_announced:
-            msg = f"⚪ @{username} has ended the live."
-            send_telegram(msg)
-        print(f"[-] @{username} disconnected or ended live.")
+            send_telegram(f"⚪ @{username} has ended the live.")
         live_announced = False
+        print(f"[-] Disconnected from @{username}")
 
     while True:
         try:
-            await client.run()
+            # Instead of client.run(), use start() (non-blocking)
+            await client.start()
         except Exception as e:
             print(f"[!] @{username} error: {e}")
-            print(f"[!] Retrying in {CHECK_INTERVAL}s...")
             await asyncio.sleep(CHECK_INTERVAL)
 
 
 async def main():
-    """Read usernames and start monitoring all of them."""
+    """Read usernames and start monitoring tasks for each."""
     if not os.path.exists(USERS_FILE):
         print(f"File '{USERS_FILE}' not found!")
         return
 
     with open(USERS_FILE, "r") as f:
-        usernames = [line.strip() for line in f if line.strip()]
+        users = [line.strip() for line in f if line.strip()]
 
-    if not usernames:
+    if not users:
         print("No usernames found in users.txt")
         return
 
     print(f"🔥 TikTok Live → Telegram Notifier started")
-    print(f"🚀 Monitoring {len(usernames)} TikTok users...")
-    for u in usernames:
-        asyncio.create_task(monitor_user(u))
+    print(f"🚀 Monitoring {len(users)} TikTok users...")
 
-    # Keep alive forever
-    while True:
-        await asyncio.sleep(3600)
+    tasks = [asyncio.create_task(watch_user(u)) for u in users]
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
-    # Explicitly create a new event loop and set it as current
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.create_task(main())
-        loop.run_forever()
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(main())
