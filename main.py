@@ -83,7 +83,9 @@ async def main():
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
+    # Explicitly create a new event loop and set it as current
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
         loop.create_task(main())
         loop.run_forever()
