@@ -28,37 +28,36 @@ def send_telegram(msg: str):
 
 
 async def watch_user(username: str):
-    """Keep trying to connect to a user's live stream."""
+    """Monitor TikTok user live status."""
     client = TikTokLiveClient(unique_id=username)
     live_announced = False
 
     @client.on(ConnectEvent)
     async def on_connect(event: ConnectEvent):
         nonlocal live_announced
+        print(f"[+] @{username} is LIVE!")
         if not live_announced:
             msg = f"🔴 @{username} is now LIVE!\nhttps://www.tiktok.com/@{username}/live"
             send_telegram(msg)
             live_announced = True
-        print(f"[+] Connected to @{username}")
 
     @client.on(DisconnectEvent)
     async def on_disconnect(event: DisconnectEvent):
         nonlocal live_announced
         if live_announced:
             send_telegram(f"⚪ @{username} has ended the live.")
+        print(f"[-] @{username} disconnected.")
         live_announced = False
-        print(f"[-] Disconnected from @{username}")
 
+    # Retry loop
     while True:
         try:
-            if not client.is_connected():
-                await client.start()
-            else:
-                await asyncio.sleep(CHECK_INTERVAL)
+            await client.start()
         except Exception as e:
-            if "UserOfflineError" in str(e):
+            err_str = str(e)
+            if "UserOfflineError" in err_str:
                 print(f"[ℹ️] @{username} is offline, rechecking in {CHECK_INTERVAL}s...")
-            elif "one connection per client" in str(e).lower():
+            elif "one connection per client" in err_str.lower():
                 print(f"[ℹ️] @{username} already connected, skipping duplicate connect.")
             else:
                 print(f"[!] @{username} unexpected error: {e}")
@@ -66,7 +65,7 @@ async def watch_user(username: str):
 
 
 async def main():
-    """Read usernames and start monitoring tasks for each."""
+    """Start monitoring all users."""
     if not os.path.exists(USERS_FILE):
         print(f"File '{USERS_FILE}' not found!")
         return
