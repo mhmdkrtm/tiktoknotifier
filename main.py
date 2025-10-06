@@ -3,7 +3,6 @@ import os
 import requests
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, DisconnectEvent
-from TikTokLive.exceptions import LiveNotFound
 
 # --- CONFIGURATION ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "your_telegram_bot_token"
@@ -54,11 +53,9 @@ async def monitor_user(username: str):
     while True:
         try:
             await client.run()
-        except LiveNotFound:
-            print(f"[!] @{username} not live. Retry in {CHECK_INTERVAL}s.")
-            await asyncio.sleep(CHECK_INTERVAL)
         except Exception as e:
-            print(f"[!] Error for @{username}: {e}")
+            print(f"[!] @{username} error: {e}")
+            print(f"[!] Retrying in {CHECK_INTERVAL}s...")
             await asyncio.sleep(CHECK_INTERVAL)
 
 
@@ -75,6 +72,7 @@ async def main():
         print("No usernames found in users.txt")
         return
 
+    print(f"🔥 TikTok Live → Telegram Notifier started")
     print(f"🚀 Monitoring {len(usernames)} TikTok users...")
     for u in usernames:
         asyncio.create_task(monitor_user(u))
@@ -85,5 +83,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    print("🔥 TikTok Live → Telegram Notifier started")
     asyncio.run(main())
