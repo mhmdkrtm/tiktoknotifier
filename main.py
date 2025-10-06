@@ -2,7 +2,7 @@ import os, asyncio, time, subprocess, requests
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, DisconnectEvent
 from telethon import TelegramClient
-mport imageio_ffmpeg as ff
+import imageio_ffmpeg as ff
 os.environ["PATH"] += os.pathsep + os.path.dirname(ff.get_ffmpeg_exe())
 print("🎬 Using bundled ffmpeg:", ff.get_ffmpeg_exe())
 
