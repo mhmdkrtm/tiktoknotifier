@@ -50,19 +50,19 @@ async def watch_user(username: str):
         print(f"[-] Disconnected from @{username}")
 
     while True:
-    try:
-        if not client.is_connected():
-            await client.start()
-        else:
+        try:
+            if not client.is_connected():
+                await client.start()
+            else:
+                await asyncio.sleep(CHECK_INTERVAL)
+        except Exception as e:
+            if "UserOfflineError" in str(e):
+                print(f"[ℹ️] @{username} is offline, rechecking in {CHECK_INTERVAL}s...")
+            elif "one connection per client" in str(e).lower():
+                print(f"[ℹ️] @{username} already connected, skipping duplicate connect.")
+            else:
+                print(f"[!] @{username} unexpected error: {e}")
             await asyncio.sleep(CHECK_INTERVAL)
-    except Exception as e:
-        if "UserOfflineError" in str(e):
-            print(f"[ℹ️] @{username} is offline, rechecking in {CHECK_INTERVAL}s...")
-        elif "one connection per client" in str(e).lower():
-            print(f"[ℹ️] @{username} already connected, skipping duplicate connect.")
-        else:
-            print(f"[!] @{username} unexpected error: {e}")
-        await asyncio.sleep(CHECK_INTERVAL)
 
 
 async def main():
