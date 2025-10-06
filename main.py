@@ -3,7 +3,7 @@ import os
 import requests
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, DisconnectEvent
-from TikTokLive.errors import LiveNotFound
+from TikTokLive.exceptions import LiveNotFound
 
 # --- CONFIGURATION ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "your_telegram_bot_token"
