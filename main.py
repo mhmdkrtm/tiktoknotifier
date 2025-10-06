@@ -9,10 +9,10 @@ from telethon import TelegramClient
 #     API_ID, API_HASH, BOT_TOKEN, CHAT_ID
 #  Option 2 – fill them here for local use (leave blank if using env vars)
 # =====================================================
-API_ID   = int(os.environ.get("API_ID", "0") or "20196111")
-API_HASH = os.environ.get("API_HASH") or "05b184f5623850b5666c32e14e7a888b"
-BOT_TOKEN = os.environ.get("BOT_TOKEN") or "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
-CHAT_ID   = os.environ.get("CHAT_ID") or "1280121045"
+API_ID   = 20196111                     # your Telegram API ID (integer)
+API_HASH = "05b184f5623850b5666c32e14e7a888b"  # your Telegram API hash
+BOT_TOKEN = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"  # your bot token
+CHAT_ID   = "1280121045"                # your chat ID
 SESSION   = "tg_session"
 
 TMP_DIR        = "/tmp/tiktok_segments"
