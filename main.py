@@ -12,17 +12,22 @@ BOT_TOKEN  = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
 CHAT_ID    = "1280121045"
 SESSION    = "tg_session"
 
-TMP_DIR        = "/tmp/tiktok_segments"
-SEGMENT_TIME   = 30           # 30 s chunks for testing (set 600 for 10 min later)
-CHECK_OFFLINE  = 60           # retry every 1 min when offline
-NOTIFY_COOLDOWN = 600         # 10 min between LIVE notifications
-USERS_FILE     = "users.txt"
+TMP_DIR         = "/tmp/tiktok_segments"
+SEGMENT_TIME    = 30            # 30 s for testing (change to 600 for production)
+CHECK_OFFLINE   = 60            # retry every 1 min when offline
+NOTIFY_COOLDOWN = 600           # 10 min between notifications
+USERS_FILE      = "users.txt"
 
 os.makedirs(TMP_DIR, exist_ok=True)
 tg_client = TelegramClient(SESSION, API_ID, API_HASH)
 
 # =====================================================
+# global cooldown tracker (shared across reconnects)
+last_notification_time = {}
+
+# =====================================================
 def send_bot_msg(text: str):
+    """Send Telegram bot text message."""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": CHAT_ID, "text": text})
@@ -75,17 +80,24 @@ def record_with_streamlink(username):
         raise RuntimeError("Streamlink failed to access stream.")
     ffmpeg.wait()
 
+# =====================================================
 def record_with_ytdlp(username):
-    """Fallback if Streamlink fails."""
+    """Fallback recorder if Streamlink fails."""
     output = os.path.join(TMP_DIR, f"{username}_yt_%(timestamp)s.%(ext)s")
     cmd = [
-        "yt-dlp", f"https://www.tiktok.com/@{username}/live",
-        "-o", output, "--hls-use-mpegts", "--no-part",
-        "--no-warnings", "--live-from-start", "--max-filesize", "500M",
+        "yt-dlp",
+        f"https://www.tiktok.com/@{username}/live",
+        "-o", output,
+        "--hls-use-mpegts",
+        "--no-part",
+        "--no-warnings",
+        "--no-live-from-start",   # ✅ fixed flag
+        "--max-filesize", "500M",
     ]
     print(f"🎥 Streamlink failed, using yt-dlp for @{username}…")
     subprocess.call(cmd)
 
+# =====================================================
 def start_recording(username):
     """Attempt Streamlink first, fallback to yt-dlp if needed."""
     try:
@@ -101,25 +113,26 @@ def start_recording(username):
 
 # =====================================================
 async def watch_user(username):
+    """Monitor user, manage recording, upload, and notifications."""
     client = TikTokLiveClient(unique_id=username)
     recording_task = None
     uploader_task = None
-    last_notify_time = 0  # for notification cooldown
 
     @client.on(ConnectEvent)
     async def on_connect(_):
-        nonlocal recording_task, uploader_task, last_notify_time
+        nonlocal recording_task, uploader_task
         print(f"[+] @{username} is LIVE!")
 
         now = time.time()
-        # Send notification only if cooldown expired
-        if now - last_notify_time > NOTIFY_COOLDOWN:
-            send_bot_msg(f"🔴 @{username} is LIVE!")
-            last_notify_time = now
-        else:
-            print(f"[ℹ️] Skipping LIVE message (within cooldown window).")
+        last_time = last_notification_time.get(username, 0)
 
-        # Start recording and uploading
+        # 🔥 check cooldown across sessions
+        if now - last_time > NOTIFY_COOLDOWN:
+            send_bot_msg(f"🔴 @{username} is LIVE!")
+            last_notification_time[username] = now
+        else:
+            print(f"[ℹ️] Skipping duplicate LIVE message (cooldown active).")
+
         if not recording_task:
             loop = asyncio.get_event_loop()
             recording_task = loop.run_in_executor(None, start_recording, username)
