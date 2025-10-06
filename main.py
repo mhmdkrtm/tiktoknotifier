@@ -4,39 +4,35 @@ from TikTokLive.events import ConnectEvent, DisconnectEvent
 from telethon import TelegramClient
 
 # =====================================================
-# 🔧 CONFIGURATION
-#  Option 1 – recommended: set as environment variables on Railway
-#     API_ID, API_HASH, BOT_TOKEN, CHAT_ID
-#  Option 2 – fill them here for local use (leave blank if using env vars)
+# 🔧 MANUAL CONFIG (inserted directly)
 # =====================================================
-API_ID   = 20196111                     # your Telegram API ID (integer)
-API_HASH = "05b184f5623850b5666c32e14e7a888b"  # your Telegram API hash
-BOT_TOKEN = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"  # your bot token
-CHAT_ID   = "1280121045"                # your chat ID
-SESSION   = "tg_session"
+API_ID     = 20196111
+API_HASH   = "05b184f5623850b5666c32e14e7a888b"
+BOT_TOKEN  = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
+CHAT_ID    = "1280121045"
+SESSION    = "tg_session"
 
+# =====================================================
 TMP_DIR        = "/tmp/tiktok_segments"
-SEGMENT_TIME   = 600          # 10 minutes per file
-CHECK_INTERVAL = 60           # seconds between offline checks
+SEGMENT_TIME   = 30           # 30 seconds for testing
+CHECK_INTERVAL = 60           # offline check interval
 USERS_FILE     = "users.txt"
 
 os.makedirs(TMP_DIR, exist_ok=True)
 tg_client = TelegramClient(SESSION, API_ID, API_HASH)
 
-# ───────────────────────────────────────────────────────────────
+# =====================================================
 def send_bot_msg(text: str):
-    """Send a short text message via the bot (optional notifications)."""
-    if not BOT_TOKEN or not CHAT_ID:
-        return
+    """Send a short message via bot to your Telegram chat."""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": CHAT_ID, "text": text})
     except Exception as e:
-        print("⚠️ bot send failed:", e)
+        print("⚠️ Bot send failed:", e)
 
-# ───────────────────────────────────────────────────────────────
+# =====================================================
 async def upload_segments(username):
-    """Upload new 10-min segments to Saved Messages and delete them."""
+    """Continuously upload new 30-sec segments to Saved Messages."""
     seen = set()
     while True:
         for f in sorted(os.listdir(TMP_DIR)):
@@ -51,7 +47,6 @@ async def upload_segments(username):
                             caption=f"🎬 @{username} — segment {time.strftime('%H:%M:%S')}",
                         )
                     print(f"☁️ Uploaded & deleted {f}")
-                    send_bot_msg(f"✅ Uploaded segment for @{username}")
                 except Exception as e:
                     print("❌ Telegram upload failed:", e)
                 finally:
@@ -61,9 +56,9 @@ async def upload_segments(username):
                         pass
         await asyncio.sleep(10)
 
-# ───────────────────────────────────────────────────────────────
+# =====================================================
 def start_ffmpeg(username):
-    """Record TikTok live into 10-minute segments via streamlink → ffmpeg."""
+    """Record TikTok live into 30-sec chunks."""
     out_pattern = os.path.join(TMP_DIR, f"{username}_%03d.mp4")
     sl_cmd = [
         "streamlink",
@@ -84,23 +79,26 @@ def start_ffmpeg(username):
         str(SEGMENT_TIME),
         out_pattern,
     ]
-    print(f"🎥 Recording @{username} in 10-min chunks…")
+    print(f"🎥 Recording @{username} in 30-second chunks…")
     sl = subprocess.Popen(sl_cmd, stdout=subprocess.PIPE)
     subprocess.Popen(ffmpeg_cmd, stdin=sl.stdout).wait()
     print(f"🛑 Recorder stopped for @{username}")
 
-# ───────────────────────────────────────────────────────────────
+# =====================================================
 async def watch_user(username):
-    """Detect live state and launch recorder/uploader."""
+    """Detect live state and trigger recording/uploader with rate-limit handling."""
     client = TikTokLiveClient(unique_id=username)
     recording_task = None
     uploader_task = None
+    notified_live = False  # so we only send one message per live session
 
     @client.on(ConnectEvent)
     async def on_connect(_):
-        nonlocal recording_task, uploader_task
+        nonlocal recording_task, uploader_task, notified_live
         print(f"[+] @{username} is LIVE!")
-        send_bot_msg(f"🔴 @{username} is LIVE!")
+        if not notified_live:
+            send_bot_msg(f"🔴 @{username} is LIVE!")
+            notified_live = True
         if not recording_task:
             loop = asyncio.get_event_loop()
             recording_task = loop.run_in_executor(None, start_ffmpeg, username)
@@ -109,20 +107,28 @@ async def watch_user(username):
 
     @client.on(DisconnectEvent)
     async def on_disconnect(_):
+        nonlocal notified_live
         print(f"[ℹ️] @{username} disconnected — waiting for next live.")
+        notified_live = False  # reset for next session
 
     while True:
         try:
             await client.start()
         except Exception as e:
-            err = str(e)
-            if "UserOfflineError" in err:
-                print(f"[ℹ️] @{username} offline — retry in {CHECK_INTERVAL}s")
+            err = str(e).lower()
+            if "rate_limit" in err:
+                print(f"[!] @{username} hit rate limit — waiting 5 minutes.")
+                await asyncio.sleep(300)
+                continue
+            elif "userofflineerror" in err:
+                print(f"[ℹ️] @{username} offline — retry in {CHECK_INTERVAL}s.")
+            elif "one connection per client" in err:
+                print(f"[ℹ️] @{username} already connected — skipping duplicate.")
             else:
-                print(f"[!] @{username} error:", e)
+                print(f"[!] @{username} unexpected error:", e)
             await asyncio.sleep(CHECK_INTERVAL)
 
-# ───────────────────────────────────────────────────────────────
+# =====================================================
 async def main():
     if not os.path.exists(USERS_FILE):
         print("❌ users.txt not found.")
@@ -132,6 +138,6 @@ async def main():
     print(f"🔥 Monitoring {len(users)} TikTok users…")
     await asyncio.gather(*(watch_user(u) for u in users))
 
-# ───────────────────────────────────────────────────────────────
+# =====================================================
 if __name__ == "__main__":
     asyncio.run(main())
