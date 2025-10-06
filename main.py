@@ -59,8 +59,8 @@ async def upload_segments(username):
 # =====================================================
 def record_with_ytdlp(username):
     """
-    Continuous yt-dlp recorder — waits until live, retries forever,
-    and ignores transient 404s like local ffmpeg.
+    Continuous yt-dlp recorder — retries every 1 second on 404,
+    and behaves like your .bat script (wait-for-video, 720p max).
     """
     print(f"🎥 Monitoring & recording @{username} via yt-dlp…")
     while True:
@@ -71,8 +71,8 @@ def record_with_ytdlp(username):
         cmd = [
             "yt-dlp",
             f"https://www.tiktok.com/@{username}/live",
-            "--wait-for-video", "60",                     # ⏳ retry every 60 s
-            "-f", "bestvideo[height<=720]+bestaudio/best",# 🎞️ max 720p
+            "--wait-for-video", "60",                     # ⏳ retry every 60 s until live
+            "-f", "bestvideo[height<=720]+bestaudio/best",# 🎞️ 720p max
             "-o", out_pattern,
             "--no-part",
             "--hls-use-mpegts",
@@ -80,19 +80,30 @@ def record_with_ytdlp(username):
             "--no-live-from-start",
             "--max-filesize", "500M",
             "--retries", "infinite",
-            "--fragment-retries", "20",
-            "--ignore-errors",                            # ✅ keep going on 404s
+            "--fragment-retries", "1000",
+            "--ignore-errors",
+            "--downloader", "ffmpeg",
             "--downloader-args",
-            "ffmpeg_i:-err_detect ignore_err -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10",
+            (
+                # 🔁 reconnect immediately every 1 s
+                "ffmpeg_i:-reconnect 1 "
+                "-reconnect_at_eof 1 "
+                "-reconnect_streamed 1 "
+                "-reconnect_delay_max 1 "
+                "-err_detect ignore_err "
+                "-rw_timeout 5000000 "
+                "-timeout 5000000"
+            ),
         ]
+
         try:
             subprocess.call(cmd)
-            print(f"🔁 Restarting recorder for @{username} in 30 s…")
-            time.sleep(30)
+            print(f"🔁 Restarting recorder for @{username} in 1 s…")
+            time.sleep(1)
         except Exception as e:
             print(f"❌ yt-dlp error for @{username}: {e}")
             send_bot_msg(f"⚠️ yt-dlp error for @{username}: {e}")
-            time.sleep(60)
+            time.sleep(1)
 
 # =====================================================
 async def watch_user(username):
@@ -125,7 +136,6 @@ async def watch_user(username):
     async def on_disconnect(_):
         print(f"[ℹ️] @{username} disconnected — waiting for next live.")
 
-    # loop, suppressing ping_loop bug
     while True:
         try:
             await client.start()
