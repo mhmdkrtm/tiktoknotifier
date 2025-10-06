@@ -7,8 +7,8 @@ print("🔍 DEBUG: TELEGRAM_TOKEN =", os.environ.get("TELEGRAM_TOKEN"))
 print("🔍 DEBUG: TELEGRAM_CHAT_ID =", os.environ.get("TELEGRAM_CHAT_ID"))
 
 # --- CONFIGURATION ---
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "your_telegram_bot_token"
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "your_chat_id"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "1280121045"
 USERS_FILE = "users.txt"
 CHECK_INTERVAL = 60  # seconds between retry attempts
 # ----------------------
