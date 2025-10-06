@@ -1,4 +1,4 @@
-https://github.com/TikTokLiveIO/TikTokLive/archive/refs/heads/main.zip
+TikToklive
 requests
 aiohttp
 websockets
