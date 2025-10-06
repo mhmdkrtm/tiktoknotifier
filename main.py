@@ -4,7 +4,7 @@ from TikTokLive.events import ConnectEvent, DisconnectEvent
 from telethon import TelegramClient
 
 # =====================================================
-# 🔧 MANUAL CONFIG (inserted directly)
+# 🔧 CONFIGURATION
 # =====================================================
 API_ID     = 20196111
 API_HASH   = "05b184f5623850b5666c32e14e7a888b"
@@ -12,10 +12,10 @@ BOT_TOKEN  = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
 CHAT_ID    = "1280121045"
 SESSION    = "tg_session"
 
-# =====================================================
 TMP_DIR        = "/tmp/tiktok_segments"
-SEGMENT_TIME   = 30           # 30 seconds for testing
-CHECK_INTERVAL = 60           # offline check interval
+SEGMENT_TIME   = 30           # 30 s chunks for testing (set 600 for 10 min later)
+CHECK_OFFLINE  = 60           # retry every 1 min when offline
+NOTIFY_COOLDOWN = 600         # 10 min between LIVE notifications
 USERS_FILE     = "users.txt"
 
 os.makedirs(TMP_DIR, exist_ok=True)
@@ -23,7 +23,6 @@ tg_client = TelegramClient(SESSION, API_ID, API_HASH)
 
 # =====================================================
 def send_bot_msg(text: str):
-    """Send a short message via bot to your Telegram chat."""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": CHAT_ID, "text": text})
@@ -32,7 +31,7 @@ def send_bot_msg(text: str):
 
 # =====================================================
 async def upload_segments(username):
-    """Continuously upload new 30-sec segments to Saved Messages."""
+    """Continuously upload new chunks to Saved Messages."""
     seen = set()
     while True:
         for f in sorted(os.listdir(TMP_DIR)):
@@ -42,9 +41,8 @@ async def upload_segments(username):
                 try:
                     async with tg_client:
                         await tg_client.send_file(
-                            "me",
-                            path,
-                            caption=f"🎬 @{username} — segment {time.strftime('%H:%M:%S')}",
+                            "me", path,
+                            caption=f"🎬 @{username} — {time.strftime('%H:%M:%S')}"
                         )
                     print(f"☁️ Uploaded & deleted {f}")
                 except Exception as e:
@@ -57,59 +55,80 @@ async def upload_segments(username):
         await asyncio.sleep(10)
 
 # =====================================================
-def start_ffmpeg(username):
-    """Record TikTok live into 30-sec chunks."""
+def record_with_streamlink(username):
+    """Main recorder using Streamlink + ffmpeg segmentation."""
     out_pattern = os.path.join(TMP_DIR, f"{username}_%03d.mp4")
     sl_cmd = [
-        "streamlink",
-        f"https://www.tiktok.com/@{username}/live",
-        "best",
-        "-O",
+        "streamlink", f"https://www.tiktok.com/@{username}/live", "best", "-O",
     ]
     ffmpeg_cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        "pipe:0",
-        "-c",
-        "copy",
-        "-f",
-        "segment",
-        "-segment_time",
-        str(SEGMENT_TIME),
+        "ffmpeg", "-y", "-i", "pipe:0",
+        "-c", "copy", "-f", "segment",
+        "-segment_time", str(SEGMENT_TIME),
         out_pattern,
     ]
-    print(f"🎥 Recording @{username} in 30-second chunks…")
-    sl = subprocess.Popen(sl_cmd, stdout=subprocess.PIPE)
-    subprocess.Popen(ffmpeg_cmd, stdin=sl.stdout).wait()
+    print(f"🎥 Recording @{username} via Streamlink…")
+    sl = subprocess.Popen(sl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    ffmpeg = subprocess.Popen(ffmpeg_cmd, stdin=sl.stdout, stderr=subprocess.PIPE)
+    stdout, stderr = sl.communicate()
+    if b"No playable streams" in stderr or b"inaccessible" in stderr:
+        raise RuntimeError("Streamlink failed to access stream.")
+    ffmpeg.wait()
+
+def record_with_ytdlp(username):
+    """Fallback if Streamlink fails."""
+    output = os.path.join(TMP_DIR, f"{username}_yt_%(timestamp)s.%(ext)s")
+    cmd = [
+        "yt-dlp", f"https://www.tiktok.com/@{username}/live",
+        "-o", output, "--hls-use-mpegts", "--no-part",
+        "--no-warnings", "--live-from-start", "--max-filesize", "500M",
+    ]
+    print(f"🎥 Streamlink failed, using yt-dlp for @{username}…")
+    subprocess.call(cmd)
+
+def start_recording(username):
+    """Attempt Streamlink first, fallback to yt-dlp if needed."""
+    try:
+        record_with_streamlink(username)
+    except Exception as e:
+        print(f"⚠️ Streamlink failed for @{username}: {e}")
+        try:
+            record_with_ytdlp(username)
+        except Exception as e2:
+            print(f"❌ yt-dlp also failed for @{username}: {e2}")
+            send_bot_msg(f"⚠️ Both recorders failed for @{username}")
     print(f"🛑 Recorder stopped for @{username}")
 
 # =====================================================
 async def watch_user(username):
-    """Detect live state and trigger recording/uploader with rate-limit handling."""
     client = TikTokLiveClient(unique_id=username)
     recording_task = None
     uploader_task = None
-    notified_live = False  # so we only send one message per live session
+    last_notify_time = 0  # for notification cooldown
 
     @client.on(ConnectEvent)
     async def on_connect(_):
-        nonlocal recording_task, uploader_task, notified_live
+        nonlocal recording_task, uploader_task, last_notify_time
         print(f"[+] @{username} is LIVE!")
-        if not notified_live:
+
+        now = time.time()
+        # Send notification only if cooldown expired
+        if now - last_notify_time > NOTIFY_COOLDOWN:
             send_bot_msg(f"🔴 @{username} is LIVE!")
-            notified_live = True
+            last_notify_time = now
+        else:
+            print(f"[ℹ️] Skipping LIVE message (within cooldown window).")
+
+        # Start recording and uploading
         if not recording_task:
             loop = asyncio.get_event_loop()
-            recording_task = loop.run_in_executor(None, start_ffmpeg, username)
+            recording_task = loop.run_in_executor(None, start_recording, username)
         if not uploader_task:
             uploader_task = asyncio.create_task(upload_segments(username))
 
     @client.on(DisconnectEvent)
     async def on_disconnect(_):
-        nonlocal notified_live
         print(f"[ℹ️] @{username} disconnected — waiting for next live.")
-        notified_live = False  # reset for next session
 
     while True:
         try:
@@ -117,16 +136,16 @@ async def watch_user(username):
         except Exception as e:
             err = str(e).lower()
             if "rate_limit" in err:
-                print(f"[!] @{username} hit rate limit — waiting 5 minutes.")
+                print(f"[!] @{username} hit rate limit — waiting 5 min.")
                 await asyncio.sleep(300)
                 continue
             elif "userofflineerror" in err:
-                print(f"[ℹ️] @{username} offline — retry in {CHECK_INTERVAL}s.")
+                print(f"[ℹ️] @{username} offline — retry in {CHECK_OFFLINE}s.")
             elif "one connection per client" in err:
                 print(f"[ℹ️] @{username} already connected — skipping duplicate.")
             else:
-                print(f"[!] @{username} unexpected error:", e)
-            await asyncio.sleep(CHECK_INTERVAL)
+                print(f"[!] @{username} error:", e)
+            await asyncio.sleep(CHECK_OFFLINE)
 
 # =====================================================
 async def main():
