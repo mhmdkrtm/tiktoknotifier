@@ -5,3 +5,4 @@ websockets
 python-telegram-bot
 gitpython
 telethon
+ffmpeg-python
