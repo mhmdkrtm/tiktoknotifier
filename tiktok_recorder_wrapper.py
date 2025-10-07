@@ -19,7 +19,7 @@ def record_chunks(username, duration_seconds=20):
     filename = f"{username}_{timestamp}.mp4"
     filepath = os.path.join(TMP_DIR, filename)
 
-    print(f"🎬 Starting {duration_minutes}-minute recording for @{username} → {filepath}")
+    print(f"🎬 Starting {duration_seconds}-minute recording for @{username} → {filepath}")
 
     try:
         # Call DouyinLiveRecorder submodule correctly
