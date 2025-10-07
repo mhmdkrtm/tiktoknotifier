@@ -59,7 +59,6 @@ async def watch_user(username: str):
             client = TikTokLiveClient(
                 unique_id=username,
                 # Pass credentials directly to the client
-                session_id=None, # session_id is used for advanced login, but typically not needed here
                 web_session_parameters={
                     "username": TIKTOK_USERNAME,
                     "password": TIKTOK_PASSWORD
