@@ -3,20 +3,21 @@ import time
 import os
 import subprocess
 import signal
-from TikTokLive import TikTokLiveClient
-from TikTokLive.events import ConnectEvent, DisconnectEvent
+from tiktoklive import TikTokLiveClient
+from tiktoklive.events import ConnectEvent, DisconnectEvent
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, RPCError
 
 # ====================================================================
-# 1. DIRECT VARIABLE INSERTION (Customize these values for testing) ⚠️
+# 1. DIRECT VARIABLE INSERTION (Customize these values) ⚠️
 # ====================================================================
 
 # --- Telegram Secrets ---
-TG_API_ID = 20196111               # ⚠️ YOUR TELEGRAM API ID (from my.telegram.org)
+# NOTE: Replace the placeholder values below with your actual credentials.
+TG_API_ID = 20196111               # ⚠️ YOUR TELEGRAM API ID
 TG_API_HASH = "05b184f5623850b5666c32e14e7a888b"     # ⚠️ YOUR TELEGRAM API HASH
 TG_BOT_TOKEN = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"        # ⚠️ YOUR TELEGRAM BOT TOKEN
-MY_USER_ID = 1280121045            # ⚠️ YOUR PERSONAL CHAT ID (e.g., your saved messages ID or private chat ID)
+MY_USER_ID = 1280121045            # ⚠️ YOUR PERSONAL CHAT ID (Must have started the bot)
 
 # --- General Config ---
 SEGMENT_DURATION_SECONDS = 30   # 🎯 SET TO 30 SECONDS FOR TESTING 🎯
@@ -26,7 +27,8 @@ USERS_FILE = 'users.txt'        # File containing usernames
 
 # --- Recorder Reconnect Logic ---
 MAX_RECONNECT_ATTEMPTS = 5
-RECONNECT_WAIT_SECONDS = 15 
+RECONNECT_WAIT_SECONDS = 15
+DISCONNECT_GRACE_PERIOD = 30    # 30 seconds to record after streamer leaves
 
 # --- Storage Paths ---
 VIDEO_PATH_TEMPLATE = './temp/{username}_segment.mp4'
@@ -34,7 +36,8 @@ VIDEO_PATH_TEMPLATE = './temp/{username}_segment.mp4'
 # --- Trackers (Global State) ---
 last_notification_time = {}
 is_recording_active = {} 
-telegram_client = None # Global client for notification messaging
+last_disconnect_time = {}       # NEW: Tracks when disconnect event occurred
+telegram_client = None
 
 
 # ====================================================================
@@ -42,7 +45,7 @@ telegram_client = None # Global client for notification messaging
 # ====================================================================
 
 async def initialize_telegram_client():
-    """Initializes the global Telethon client."""
+    """Initializes the single, global Telethon client."""
     global telegram_client
     if telegram_client is None:
         print("[ℹ️] Initializing Telegram Client...")
@@ -52,24 +55,25 @@ async def initialize_telegram_client():
             telegram_client = client
             print("[✅] Telegram Client connected successfully.")
         except SessionPasswordNeededError:
-            print("[❌] ERROR: 2FA is enabled. Telethon requires a user account setup for 2FA, or ensure you are connecting as a bot only.")
+            print("[❌] ERROR: 2FA is enabled. Telethon requires user setup.")
             raise
         except RPCError as e:
-            print(f"[❌] Telegram RPC Error during connection: {e}")
+            print(f"[❌] FATAL RPC Error during connection: {e}")
             raise
 
 async def send_bot_msg(message):
-    """FIX: Sends message using the async Telethon client."""
+    """Sends message using the async Telethon client for notifications."""
     global telegram_client
+    # If the client is not yet initialized (e.g., failed startup), try once
     if telegram_client is None:
         try:
             await initialize_telegram_client()
         except:
-            print("[❌] Failed to initialize Telegram client for notification.")
+            print("[❌] Failed to initialize Telegram client for notification. Check credentials.")
             return
 
     try:
-        # 'me' or MY_USER_ID can be used to send to Saved Messages
+        # Sends message to the defined MY_USER_ID
         await telegram_client.send_message(MY_USER_ID, message)
         print(f"[✅] Telegram Notification sent.")
     except Exception as e:
@@ -81,8 +85,8 @@ async def send_bot_msg(message):
 
 def record_with_ytdlp(username):
     """
-    Synchronous function that manages segmented recording using yt-dlp.
-    Uses the user's verified working yt-dlp options.
+    Synchronous function that manages segmented recording, 
+    now handling the 30s grace period and retry logic.
     """
     video_path = VIDEO_PATH_TEMPLATE.format(username=username)
     os.makedirs(os.path.dirname(video_path), exist_ok=True)
@@ -97,7 +101,7 @@ def record_with_ytdlp(username):
         segment_count += 1
         print(f"--- @{username}: Starting Segment {segment_count} ---")
         
-        # --- FIXED COMMAND USING YOUR WORKING OPTIONS ---
+        # --- FIXED COMMAND using your working yt-dlp options ---
         command = [
             'yt-dlp',
             '--wait-for-video', '60',
@@ -107,19 +111,37 @@ def record_with_ytdlp(username):
         ]
         
         try:
-            # Note: We use PIPE for stderr to capture errors, but DEVNULL for stdout
             process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             
-            # Monitor and terminate the process based on SEGMENT_DURATION_SECONDS
             start_time = time.time()
-            while time.time() - start_time < SEGMENT_DURATION_SECONDS:
-                if not is_recording_active.get(username, False) or process.poll() is not None:
-                    break
+            
+            # --- NEW MONITORING LOOP LOGIC ---
+            while True:
                 time.sleep(1)
+                current_time = time.time()
+                
+                # Condition 1: Check if the segment is over the max duration
+                if current_time - start_time >= SEGMENT_DURATION_SECONDS:
+                    break
+                    
+                # Condition 2: Check for external disconnect event (grace period)
+                if username in last_disconnect_time:
+                    if current_time - last_disconnect_time[username] >= DISCONNECT_GRACE_PERIOD:
+                        print(f"[INFO] Disconnect grace period ({DISCONNECT_GRACE_PERIOD}s) elapsed. Forcing segment stop.")
+                        break
+                        
+                # Condition 3: Check if yt-dlp quit unexpectedly
+                if process.poll() is not None:
+                    print(f"[WARNING] yt-dlp quit early (Code: {process.returncode}). Breaking loop.")
+                    break
+                    
+                # Condition 4: Stop if the overall flag is turned off externally (e.g., app shutdown)
+                if not is_recording_active.get(username, False):
+                    break
             
             # --- Robust Termination ---
             if process.poll() is None:
-                print("Segment recording timed out. Terminating process...")
+                print("Terminating process...")
                 process.send_signal(signal.SIGINT)
                 
                 try:
@@ -132,21 +154,30 @@ def record_with_ytdlp(username):
             if stderr:
                  print(f"[YT-DLP DEBUG/ERROR] @{username}: {stderr.decode().strip()}")
 
-            # --- Check Result ---
+            # --- Check Result and Decide Next Action ---
             if os.path.exists(video_path) and os.path.getsize(video_path) > 1024 * 10:
                 print(f"[✅] Segment recording succeeded. File size: {os.path.getsize(video_path) / (1024*1024):.2f}MB")
                 consecutive_failures = 0
+                
+                # If finished during grace period, force exit
+                if username in last_disconnect_time:
+                    is_recording_active[username] = False 
+                    del last_disconnect_time[username] 
             else:
-                # --- Failure Logic: Retry ---
-                print(f"[⚠️] Recording failed or file too small for @{username}. Retrying...")
-                consecutive_failures += 1
-                if consecutive_failures < MAX_RECONNECT_ATTEMPTS:
-                    print(f"Waiting {RECONNECT_WAIT_SECONDS}s before re-initiation (Attempt {consecutive_failures+1}/{MAX_RECONNECT_ATTEMPTS})...")
-                    time.sleep(RECONNECT_WAIT_SECONDS)
-                    continue
-                else:
-                    print(f"[❌] Max reconnection attempts ({MAX_RECONNECT_ATTEMPTS}) reached. Stopping recording for @{username}.")
+                # --- Failure Logic: Retry or Exit ---
+                if username in last_disconnect_time:
+                    print(f"[INFO] File too small during grace period. Assuming stream is fully dead.")
                     is_recording_active[username] = False
+                    del last_disconnect_time[username]
+                else:
+                    print(f"[⚠️] Recording failed or file too small. Retrying...")
+                    consecutive_failures += 1
+                    if consecutive_failures < MAX_RECONNECT_ATTEMPTS:
+                        time.sleep(RECONNECT_WAIT_SECONDS)
+                        continue
+                    else:
+                        print(f"[❌] Max reconnection attempts reached. Stopping recording for @{username}.")
+                        is_recording_active[username] = False
             
         except FileNotFoundError:
             print("[❌] FATAL ERROR: 'yt-dlp' or 'ffmpeg' command not found. Cannot continue.")
@@ -158,7 +189,7 @@ def record_with_ytdlp(username):
             if consecutive_failures >= MAX_RECONNECT_ATTEMPTS:
                  is_recording_active[username] = False
             
-    print(f"@{username} Recording loop stopped. (Failures: {consecutive_failures})")
+    print(f"@{username} Recording loop stopped.")
 
 
 async def upload_segments(username):
@@ -235,7 +266,6 @@ async def watch_user(username):
         now = time.time()
         last_time = last_notification_time.get(username, 0)
         if now - last_time > NOTIFY_COOLDOWN:
-            # FIX: Now calls the new async send_bot_msg function
             await send_bot_msg(f"🔴 @{username} is LIVE! Recording started (30s segments).")
             last_notification_time[username] = now
         else:
@@ -252,9 +282,16 @@ async def watch_user(username):
 
     @client.on(DisconnectEvent)
     async def on_disconnect(_):
-        print(f"[ℹ️] @{username} disconnected — stopping tasks.")
-        await send_bot_msg(f"⏹️ @{username} is now OFFLINE. Recording stopped.")
-        stop_tasks()
+        nonlocal recording_task, uploader_task
+        print(f"[⚠️] @{username} disconnected. Allowing {DISCONNECT_GRACE_PERIOD}s grace period for segment to finish.")
+        
+        # Record disconnect time, DO NOT set is_recording_active=False yet.
+        last_disconnect_time[username] = time.time()
+        
+        # Notify user that the stream is offline but we are waiting for the final segment
+        await send_bot_msg(f"⏸️ @{username} is now OFFLINE. Finishing current segment (Grace Period: {DISCONNECT_GRACE_PERIOD}s)...")
+        
+        # The stop_tasks will be called by the recorder when the grace period or max attempts are reached.
         
     while True:
         try:
@@ -287,6 +324,7 @@ async def watch_user(username):
                 await asyncio.sleep(CHECK_OFFLINE)
 
 async def main():
+    # Final check for required variables
     if not all([TG_API_ID, TG_API_HASH, TG_BOT_TOKEN, MY_USER_ID]):
         print("❌ FATAL: One or more Telegram credentials are missing. Please fill in the variables in Section 1.")
         return
@@ -305,8 +343,12 @@ async def main():
         return
 
     # Initialize the single, global Telegram client before starting loops
-    await initialize_telegram_client()
-    
+    try:
+        await initialize_telegram_client()
+    except Exception:
+        print("Exiting due to critical Telegram connection failure.")
+        return
+        
     print(f"🔥 Monitoring {len(users)} TikTok users…")
     
     await asyncio.gather(*(watch_user(u) for u in users))
