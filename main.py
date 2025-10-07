@@ -4,37 +4,29 @@ import requests
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, DisconnectEvent
 
-# ====================================================================
-# 1. CONFIGURATION AND CREDENTIALS ⚠️
-# ====================================================================
-
-# --- Telegram Credentials ---
+# --- CONFIGURATION ---
 # NOTE: Using os.environ.get for deployment secrets (best practice)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "1280121045"
 USERS_FILE = "users.txt"
-CHECK_INTERVAL = 300  # Increased to 300s (5 min) to respect rate limits
+CHECK_INTERVAL = 60  # seconds between retry attempts
 
-# --- TikTok Login Credentials (FOR AUTHENTICATION) ---
-# Set these as environment variables on Railway for security, OR insert directly here.
-TIKTOK_USERNAME = os.environ.get("TIKTOK_USERNAME") or "mhero0030@gmail.com"
-TIKTOK_PASSWORD = os.environ.get("TIKTOK_PASSWORD") or "mhmd2002"
-
-# --- API Setup ---
+# --- Checks ---
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    print("❌ FATAL: Telegram credentials missing.")
+    print("❌ FATAL: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is missing from environment variables or config.")
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
 # ----------------------
 
 def send_telegram(msg: str):
-    """Send message to Telegram using synchronous requests."""
+    """Send message to Telegram using blocking requests (for simplicity)."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram credentials missing. Skipping notification.")
         return
         
     try:
+        # Use simple requests.post (Note: this is blocking, but acceptable for simple notification)
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
         r = requests.post(TELEGRAM_API, json=payload, timeout=10)
         if r.status_code != 200:
@@ -44,10 +36,10 @@ def send_telegram(msg: str):
     except Exception as e:
         print("❌ Telegram send failed:", e)
 
-# ----------------------
+# --- Core Monitoring Logic ---
 
 async def watch_user(username: str):
-    """Monitor one TikTok user for live status, using account login."""
+    """Keep trying to connect to a user's live stream."""
     
     # live_announced acts as the 'only notify once' flag for the current session
     live_announced = False
@@ -55,17 +47,7 @@ async def watch_user(username: str):
     # Main loop to handle disconnections and retries
     while True:
         try:
-            # --- AUTHENTICATION FIX: Corrected client initialization ---
-            # Removed the incorrect 'session_id=None' argument.
-            client = TikTokLiveClient(
-                unique_id=username,
-                # web_session_parameters handles the authenticated login
-                web_session_parameters={
-                    "username": TIKTOK_USERNAME,
-                    "password": TIKTOK_PASSWORD
-                }
-            )
-            # -----------------------------------------------------------
+            client = TikTokLiveClient(unique_id=username)
             
             @client.on(ConnectEvent)
             async def on_connect(event: ConnectEvent):
@@ -97,12 +79,11 @@ async def watch_user(username: str):
             await client.start()
             
         except Exception as e:
-            # This handles rate limit errors, disconnects, user offline, etc.
-            # The rate limit error should be significantly reduced now with the login.
-            print(f"[!] @{username} error: {e}. Retrying in {CHECK_INTERVAL}s...")
+            # Handle user offline, connection errors, or client library bugs
+            print(f"[!] @{username} error: {e}. Retrying...")
             live_announced = False # Ensure we try to notify again on next connection
             await asyncio.sleep(CHECK_INTERVAL)
-            
+
 async def main():
     """Read usernames and start monitoring tasks for each."""
     if not os.path.exists(USERS_FILE):
@@ -117,10 +98,6 @@ async def main():
         print("No usernames found in users.txt")
         return
         
-    # Final check for credentials
-    if TIKTOK_USERNAME == "YOUR_TIKTOK_USERNAME" or TIKTOK_PASSWORD == "YOUR_TIKTOK_PASSWORD":
-        print("❌ WARNING: Please replace TikTok login placeholders in the code/environment.")
-    
     print(f"🔥 TikTok Live → Telegram Notifier started")
     print(f"🚀 Monitoring {len(users)} TikTok users: {', '.join(users)}")
     
