@@ -9,7 +9,7 @@ TMP_DIR = os.path.join(os.getcwd(), "tiktoknotifier", "tmp")
 # Ensure folder exists
 os.makedirs(TMP_DIR, exist_ok=True)
 
-def record_chunks(username, duration_minutes=10):
+def record_chunks(username, duration_seconds=20):
     """
     Record a TikTok live stream for a given username and duration.
     Splits recordings into chunks and stores temporarily in tmp folder.
@@ -37,7 +37,7 @@ def record_chunks(username, duration_minutes=10):
         )
 
         # Run for duration_minutes then stop
-        time.sleep(duration_minutes * 60)
+        time.sleep(duration_seconds)
         process.terminate()
 
         # Give recorder time to finalize the file
