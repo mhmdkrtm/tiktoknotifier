@@ -50,4 +50,16 @@ def record_tiktok(username, duration_minutes=10):
         # Return the most recent file (if any)
         mp4_files = [f for f in files if username in f and f.endswith(('.mp4', '.flv'))]
         if not mp4_files:
-            print(f"⚪ No file found for @{username}. Possibly user not live or ar
+            print(f"⚪ No file found for @{username}. Possibly user not live or args incorrect.")
+            return None
+
+        # Get latest file
+        mp4_files.sort(key=lambda f: os.path.getmtime(os.path.join(TMP_DIR, f)), reverse=True)
+        latest_file = os.path.join(TMP_DIR, mp4_files[0])
+
+        print(f"✅ Recorded file: {latest_file}")
+        return latest_file
+
+    except Exception as e:
+        print(f"❌ Error during recording: {e}")
+        return None
