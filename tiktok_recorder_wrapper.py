@@ -42,6 +42,8 @@ async def record_chunks(username):
         process.terminate()
         time.sleep(2)
 
+        print("TMP content after recording:", os.listdir(TMP_DIR))
+
         # Upload and clean up
         if os.path.exists(output_file):
             print(f"📤 Uploading {output_file} to Telegram…")
