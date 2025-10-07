@@ -3,8 +3,8 @@ import time
 import os
 import subprocess
 import signal
-from tiktoklive.client import TikTokLiveClient
-from tiktoklive.events import ConnectEvent, DisconnectEvent
+from TikTokLive import TikTokLiveClient
+from TikTokLive.events import ConnectEvent, DisconnectEvent
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, RPCError
 
