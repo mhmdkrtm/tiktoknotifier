@@ -27,9 +27,10 @@ async def record_chunks(username):
 
         print(f"🎬 Starting 10-minute recording for @{username} → {output_file}")
         process = subprocess.Popen(
-            ["python3", "tiktok-live-recorder/main.py", "--u", username, "--o", output_file],
+            ["python3", "tiktok-live-recorder/main.py", "--user", username, "--output", TMP_DIR],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
+
 
         # Record for 10 minutes (600 seconds)
         try:
