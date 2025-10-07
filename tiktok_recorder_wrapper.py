@@ -44,6 +44,20 @@ async def record_chunks(username):
         time.sleep(2)
 
         print("TMP content after recording:", os.listdir(TMP_DIR))
+        
+        latest_files = sorted(
+            [os.path.join(TMP_DIR, f) for f in os.listdir(TMP_DIR)],
+            key=os.path.getmtime,
+            reverse=True
+        )
+        if latest_files:
+            output_file = latest_files[0]
+            print(f"📤 Uploading {output_file} to Telegram…")
+            await send_to_telegram(output_file)
+            os.remove(output_file)
+            print(f"🧹 Deleted {output_file}")
+        else:
+            print(f"⚪ No file found for @{username}. Possibly user not live or args incorrect.")
 
         # Upload and clean up
         if os.path.exists(output_file):
