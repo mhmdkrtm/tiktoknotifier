@@ -3,26 +3,92 @@ import time
 import os
 import subprocess
 import signal
-from TikTokLive import TikTokLiveClient
-from TikTokLive.events import ConnectEvent, DisconnectEvent
+from tiktoklive.client import TikTokLiveClient
+from tiktoklive.events import ConnectEvent, DisconnectEvent
 from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError, RPCError
 
-# --- ADD THIS NEW CONSTANT AT THE TOP OF YOUR FILE ---
+# ====================================================================
+# 1. DIRECT VARIABLE INSERTION (Customize these values for testing) ⚠️
+# ====================================================================
+
+# --- Telegram Secrets ---
+TG_API_ID = 20196111               # ⚠️ YOUR TELEGRAM API ID (from my.telegram.org)
+TG_API_HASH = "05b184f5623850b5666c32e14e7a888b"     # ⚠️ YOUR TELEGRAM API HASH
+TG_BOT_TOKEN = "AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"        # ⚠️ YOUR TELEGRAM BOT TOKEN
+MY_USER_ID = 1280121045            # ⚠️ YOUR PERSONAL CHAT ID (e.g., your saved messages ID or private chat ID)
+
+# --- General Config ---
+SEGMENT_DURATION_SECONDS = 30   # 🎯 SET TO 30 SECONDS FOR TESTING 🎯
+CHECK_OFFLINE = 30              # Seconds to wait when user is offline
+NOTIFY_COOLDOWN = 600           # Cooldown for live notifications (10 min)
+USERS_FILE = 'users.txt'        # File containing usernames
+
+# --- Recorder Reconnect Logic ---
 MAX_RECONNECT_ATTEMPTS = 5
 RECONNECT_WAIT_SECONDS = 15 
-# ----------------------------------------------------
+
+# --- Storage Paths ---
+VIDEO_PATH_TEMPLATE = './temp/{username}_segment.mp4'
+
+# --- Trackers (Global State) ---
+last_notification_time = {}
+is_recording_active = {} 
+telegram_client = None # Global client for notification messaging
+
+
+# ====================================================================
+# 2. CORE FUNCTIONS: Telegram Client & Notifier
+# ====================================================================
+
+async def initialize_telegram_client():
+    """Initializes the global Telethon client."""
+    global telegram_client
+    if telegram_client is None:
+        print("[ℹ️] Initializing Telegram Client...")
+        client = TelegramClient('session_name', TG_API_ID, TG_API_HASH)
+        try:
+            await client.start(bot_token=TG_BOT_TOKEN)
+            telegram_client = client
+            print("[✅] Telegram Client connected successfully.")
+        except SessionPasswordNeededError:
+            print("[❌] ERROR: 2FA is enabled. Telethon requires a user account setup for 2FA, or ensure you are connecting as a bot only.")
+            raise
+        except RPCError as e:
+            print(f"[❌] Telegram RPC Error during connection: {e}")
+            raise
+
+async def send_bot_msg(message):
+    """FIX: Sends message using the async Telethon client."""
+    global telegram_client
+    if telegram_client is None:
+        try:
+            await initialize_telegram_client()
+        except:
+            print("[❌] Failed to initialize Telegram client for notification.")
+            return
+
+    try:
+        # 'me' or MY_USER_ID can be used to send to Saved Messages
+        await telegram_client.send_message(MY_USER_ID, message)
+        print(f"[✅] Telegram Notification sent.")
+    except Exception as e:
+        print(f"[❌] Failed to send Telegram message to {MY_USER_ID}: {e}")
+
+# ====================================================================
+# 3. CORE FUNCTIONS: Recording and Uploading
+# ====================================================================
 
 def record_with_ytdlp(username):
     """
-    Synchronous function called by an executor. 
-    It loops to record 10-minute segments until the 'is_recording_active' flag is False,
-    now with enhanced termination and retry logic.
+    Synchronous function that manages segmented recording using yt-dlp.
+    Uses the user's verified working yt-dlp options.
     """
     video_path = VIDEO_PATH_TEMPLATE.format(username=username)
     os.makedirs(os.path.dirname(video_path), exist_ok=True)
     tiktok_url = f"https://www.tiktok.com/@{username}/live"
     segment_count = 0
-    consecutive_failures = 0 # New counter for retries
+    consecutive_failures = 0
     
     if os.path.exists(video_path):
         os.remove(video_path)
@@ -31,56 +97,59 @@ def record_with_ytdlp(username):
         segment_count += 1
         print(f"--- @{username}: Starting Segment {segment_count} ---")
         
+        # --- FIXED COMMAND USING YOUR WORKING OPTIONS ---
         command = [
             'yt-dlp',
-            '--no-playlist', 
-            '--live-from-start',
-            '-f', 'best',
-            '--hls-use-mpegts', # Often improves stability for live streams
+            '--wait-for-video', '60',
+            '-f', 'bestvideo[height<=720]+bestaudio/best',
             '--output', video_path, 
             tiktok_url
         ]
         
         try:
-            # NOTE: We keep DEVNULL to avoid filling logs unless debugging
-            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Note: We use PIPE for stderr to capture errors, but DEVNULL for stdout
+            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             
+            # Monitor and terminate the process based on SEGMENT_DURATION_SECONDS
             start_time = time.time()
             while time.time() - start_time < SEGMENT_DURATION_SECONDS:
                 if not is_recording_active.get(username, False) or process.poll() is not None:
                     break
                 time.sleep(1)
             
-            # --- Robust Termination: Send SIGINT first to allow file flush ---
+            # --- Robust Termination ---
             if process.poll() is None:
                 print("Segment recording timed out. Terminating process...")
-                process.send_signal(signal.SIGINT) # Gentle stop signal
+                process.send_signal(signal.SIGINT)
                 
-                # Wait for the process to exit after the gentle signal
                 try:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    # If it's still alive after 5 seconds, kill it hard
                     process.kill()
+            
+            # Capture any remaining stderr and check for errors
+            stdout, stderr = process.communicate()
+            if stderr:
+                 print(f"[YT-DLP DEBUG/ERROR] @{username}: {stderr.decode().strip()}")
 
             # --- Check Result ---
             if os.path.exists(video_path) and os.path.getsize(video_path) > 1024 * 10:
                 print(f"[✅] Segment recording succeeded. File size: {os.path.getsize(video_path) / (1024*1024):.2f}MB")
-                consecutive_failures = 0 # Reset failure count on success
+                consecutive_failures = 0
             else:
-                # --- Failure Logic: Retry instead of Exit ---
+                # --- Failure Logic: Retry ---
                 print(f"[⚠️] Recording failed or file too small for @{username}. Retrying...")
                 consecutive_failures += 1
                 if consecutive_failures < MAX_RECONNECT_ATTEMPTS:
-                    print(f"Waiting {RECONNECT_WAIT_SECONDS}s before re-initiation...")
+                    print(f"Waiting {RECONNECT_WAIT_SECONDS}s before re-initiation (Attempt {consecutive_failures+1}/{MAX_RECONNECT_ATTEMPTS})...")
                     time.sleep(RECONNECT_WAIT_SECONDS)
-                    continue # Skip to next iteration
+                    continue
                 else:
-                    # Max retries reached, NOW we exit the main loop
+                    print(f"[❌] Max reconnection attempts ({MAX_RECONNECT_ATTEMPTS}) reached. Stopping recording for @{username}.")
                     is_recording_active[username] = False
             
         except FileNotFoundError:
-            print("[❌] ERROR: 'yt-dlp' or 'ffmpeg' command not found. Fatal error.")
+            print("[❌] FATAL ERROR: 'yt-dlp' or 'ffmpeg' command not found. Cannot continue.")
             is_recording_active[username] = False
             break
         except Exception as e:
@@ -90,98 +159,6 @@ def record_with_ytdlp(username):
                  is_recording_active[username] = False
             
     print(f"@{username} Recording loop stopped. (Failures: {consecutive_failures})")
-# ====================================================================
-# 1. DIRECT VARIABLE INSERTION (Customize these values) ⚠️
-# ====================================================================
-
-# --- Telegram Secrets (Insert Your Credentials Directly) ---
-TG_API_ID = 20196111               # ⚠️ YOUR TELEGRAM API ID (from my.telegram.org)
-TG_API_HASH = "05b184f5623850b5666c32e14e7a888b"     # ⚠️ YOUR TELEGRAM API HASH
-TG_BOT_TOKEN = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"        # ⚠️ YOUR TELEGRAM BOT TOKEN
-MY_USER_ID = 1280121045            # ⚠️ YOUR PERSONAL CHAT ID (to send to Saved Messages)
-
-# --- General Config ---
-SEGMENT_DURATION_SECONDS = 600  # 10 minutes (600 seconds)
-CHECK_OFFLINE = 30              # Seconds to wait when user is offline
-NOTIFY_COOLDOWN = 600           # Cooldown for live notifications (10 min)
-USERS_FILE = 'users.txt'        # File containing usernames
-
-# --- Storage Paths ---
-# Path for the temporary video segment on Railway's ephemeral disk
-VIDEO_PATH_TEMPLATE = './temp/{username}_segment.mp4'
-
-# --- Trackers (Global State) ---
-last_notification_time = {}
-is_recording_active = {} 
-
-# Dummy function for sending simple messages (replace with your actual implementation)
-def send_bot_msg(message):
-    # In a fully deployed bot, you might use Telethon here too, 
-    # but for simplicity, we'll keep the print for the notification message.
-    print(f"[TG] {message}")
-
-
-# ====================================================================
-# 2. CORE FUNCTIONS: Recording and Uploading (No changes needed here)
-# ====================================================================
-
-def record_with_ytdlp(username):
-    """
-    Synchronous function called by an executor. 
-    It loops to record 10-minute segments until the 'is_recording_active' flag is False.
-    """
-    video_path = VIDEO_PATH_TEMPLATE.format(username=username)
-    os.makedirs(os.path.dirname(video_path), exist_ok=True)
-    tiktok_url = f"https://www.tiktok.com/@{username}/live"
-    segment_count = 0
-    
-    if os.path.exists(video_path):
-        os.remove(video_path)
-
-    while is_recording_active.get(username, False):
-        segment_count += 1
-        print(f"--- @{username}: Starting Segment {segment_count} ---")
-        
-        command = [
-            'yt-dlp',
-            '--no-playlist', 
-            '--live-from-start',
-            '-f', 'best',
-            '--output', video_path, 
-            tiktok_url
-        ]
-        
-        try:
-            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            start_time = time.time()
-            while time.time() - start_time < SEGMENT_DURATION_SECONDS:
-                if not is_recording_active.get(username, False) or process.poll() is not None:
-                    break
-                time.sleep(1)
-            
-            if process.poll() is None:
-                print(f"Segment recording timed out. Terminating process...")
-                process.terminate()
-                time.sleep(2) 
-                if process.poll() is None:
-                    process.kill()
-            
-            if os.path.exists(video_path) and os.path.getsize(video_path) > 1024 * 10:
-                print(f"Segment recording for @{username} stopped. File size: {os.path.getsize(video_path) / (1024*1024):.2f}MB")
-            else:
-                print(f"Recording failed or file too small for @{username}. Live may have ended.")
-                is_recording_active[username] = False
-            
-        except FileNotFoundError:
-            print("[❌] ERROR: 'yt-dlp' or 'ffmpeg' command not found. Ensure they are installed on Railway!")
-            is_recording_active[username] = False
-            break
-        except Exception as e:
-            print(f"[!] @{username} Error during recording segment: {e}")
-            is_recording_active[username] = False
-            
-    print(f"@{username} Recording loop stopped.")
 
 
 async def upload_segments(username):
@@ -190,13 +167,12 @@ async def upload_segments(username):
     uploads them to Telegram, and deletes them.
     """
     video_path = VIDEO_PATH_TEMPLATE.format(username=username)
+    global telegram_client
 
-    # Telethon client uses the global constants defined above
-    client = TelegramClient('session_name', TG_API_ID, TG_API_HASH)
+    if telegram_client is None:
+        await initialize_telegram_client()
 
     try:
-        await client.start(bot_token=TG_BOT_TOKEN) 
-        
         while is_recording_active.get(username, False):
             await asyncio.sleep(5)
             
@@ -204,10 +180,10 @@ async def upload_segments(username):
                 print(f"[⬆️] @{username}: Segment ready, starting upload...")
                 
                 try:
-                    await client.send_file(
+                    await telegram_client.send_file(
                         MY_USER_ID, 
                         video_path, 
-                        caption=f"TikTok Live: @{username} Segment {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}"
+                        caption=f"🎥 TikTok LIVE: @{username} Segment {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}"
                     )
                     print("[✅] Upload successful.")
 
@@ -225,11 +201,9 @@ async def upload_segments(username):
 
     except Exception as e:
         print(f"[❌] Uploader task error for @{username}: {e}")
-    finally:
-        await client.disconnect()
 
 # ====================================================================
-# 3. TIKTOK LISTENER AND MAIN LOOP (No functional changes needed)
+# 4. TIKTOK LISTENER AND MAIN LOOP
 # ====================================================================
 
 async def watch_user(username):
@@ -261,7 +235,8 @@ async def watch_user(username):
         now = time.time()
         last_time = last_notification_time.get(username, 0)
         if now - last_time > NOTIFY_COOLDOWN:
-            send_bot_msg(f"🔴 @{username} is LIVE! Recording started.")
+            # FIX: Now calls the new async send_bot_msg function
+            await send_bot_msg(f"🔴 @{username} is LIVE! Recording started (30s segments).")
             last_notification_time[username] = now
         else:
             print(f"[ℹ️] Skipping duplicate LIVE message (cooldown active).")
@@ -278,6 +253,7 @@ async def watch_user(username):
     @client.on(DisconnectEvent)
     async def on_disconnect(_):
         print(f"[ℹ️] @{username} disconnected — stopping tasks.")
+        await send_bot_msg(f"⏹️ @{username} is now OFFLINE. Recording stopped.")
         stop_tasks()
         
     while True:
@@ -311,7 +287,6 @@ async def watch_user(username):
                 await asyncio.sleep(CHECK_OFFLINE)
 
 async def main():
-    # Final check for required variables
     if not all([TG_API_ID, TG_API_HASH, TG_BOT_TOKEN, MY_USER_ID]):
         print("❌ FATAL: One or more Telegram credentials are missing. Please fill in the variables in Section 1.")
         return
@@ -329,6 +304,9 @@ async def main():
         print("❌ users.txt is empty. Add TikTok usernames.")
         return
 
+    # Initialize the single, global Telegram client before starting loops
+    await initialize_telegram_client()
+    
     print(f"🔥 Monitoring {len(users)} TikTok users…")
     
     await asyncio.gather(*(watch_user(u) for u in users))
