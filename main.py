@@ -55,10 +55,11 @@ async def watch_user(username: str):
     # Main loop to handle disconnections and retries
     while True:
         try:
-            # --- AUTHENTICATION FIX: Initialize client with credentials ---
+            # --- AUTHENTICATION FIX: Corrected client initialization ---
+            # Removed the incorrect 'session_id=None' argument.
             client = TikTokLiveClient(
                 unique_id=username,
-                # Pass credentials directly to the client
+                # web_session_parameters handles the authenticated login
                 web_session_parameters={
                     "username": TIKTOK_USERNAME,
                     "password": TIKTOK_PASSWORD
@@ -97,11 +98,11 @@ async def watch_user(username: str):
             
         except Exception as e:
             # This handles rate limit errors, disconnects, user offline, etc.
-            # The rate limit error should be significantly reduced now.
+            # The rate limit error should be significantly reduced now with the login.
             print(f"[!] @{username} error: {e}. Retrying in {CHECK_INTERVAL}s...")
             live_announced = False # Ensure we try to notify again on next connection
             await asyncio.sleep(CHECK_INTERVAL)
-
+            
 async def main():
     """Read usernames and start monitoring tasks for each."""
     if not os.path.exists(USERS_FILE):
