@@ -4,3 +4,4 @@ aiohttp
 websockets
 python-telegram-bot
 gitpython
+telethon
