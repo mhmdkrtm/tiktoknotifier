@@ -1,6 +1,7 @@
 import asyncio
 import os
 import requests
+import time # Added time module for tracking cooldown
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, DisconnectEvent
 
@@ -9,13 +10,17 @@ from TikTokLive.events import ConnectEvent, DisconnectEvent
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "1280121045"
 USERS_FILE = "users.txt"
-CHECK_INTERVAL = 60  # seconds between retry attempts
+CHECK_INTERVAL = 60  # seconds between retry attempts (for errors/offline users)
+SUCCESS_COOLDOWN = 300 # NEW: 5 minutes (300 seconds) cooldown after successful connection
 
 # --- Checks ---
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     print("❌ FATAL: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is missing from environment variables or config.")
 
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+# --- Global State Tracking (for cooldown) ---
+last_success_time = {}
 
 # ----------------------
 
@@ -26,7 +31,6 @@ def send_telegram(msg: str):
         return
         
     try:
-        # Use simple requests.post (Note: this is blocking, but acceptable for simple notification)
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
         r = requests.post(TELEGRAM_API, json=payload, timeout=10)
         if r.status_code != 200:
@@ -46,6 +50,16 @@ async def watch_user(username: str):
     
     # Main loop to handle disconnections and retries
     while True:
+        
+        # --- NEW COOLDOWN CHECK ---
+        last_time = last_success_time.get(username, 0)
+        if time.time() - last_time < SUCCESS_COOLDOWN:
+            remaining = int(SUCCESS_COOLDOWN - (time.time() - last_time))
+            print(f"[INFO] @{username} is on success cooldown. Skipping check for {remaining}s.")
+            await asyncio.sleep(remaining)
+            continue
+        # --------------------------
+        
         try:
             client = TikTokLiveClient(unique_id=username)
             
@@ -65,7 +79,6 @@ async def watch_user(username: str):
                 nonlocal live_announced
                 print(f"[-] @{username} disconnected or ended live.")
                 
-                # Only notify if we actually announced the stream start
                 if live_announced:
                     msg = f"⚪ @{username} has ended the live."
                     send_telegram(msg)
@@ -78,9 +91,13 @@ async def watch_user(username: str):
             # Start the client. This call is blocking until disconnection or error.
             await client.start()
             
+            # --- SUCCESS LOGIC: Update last successful connection time ---
+            last_success_time[username] = time.time()
+            # -----------------------------------------------------------
+            
         except Exception as e:
             # Handle user offline, connection errors, or client library bugs
-            print(f"[!] @{username} error: {e}. Retrying...")
+            print(f"[!] @{username} error: {e}. Retrying in {CHECK_INTERVAL}s...")
             live_announced = False # Ensure we try to notify again on next connection
             await asyncio.sleep(CHECK_INTERVAL)
 
