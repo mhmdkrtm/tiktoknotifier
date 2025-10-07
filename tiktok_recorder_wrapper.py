@@ -25,9 +25,9 @@ async def record_tiktok(username, duration_seconds=20):
     """Record TikTok Live in 20-second chunks and upload to Telegram."""
     while True:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(TMP_DIR, f"{username}_{timestamp}.mp4")
+        output_file = os.path.join(TMP_DIR, f"{username}_{timestamp}.flv")
 
-        print(f"🎬 Starting 20-second recording for @{username} → {output_file}")
+        print(f"🎬 Starting {duration_seconds}-second recording for @{username} → {output_file}")
 
         # Run the TikTok recorder from the submodule
         process = subprocess.Popen(
@@ -45,6 +45,7 @@ async def record_tiktok(username, duration_seconds=20):
         process.terminate()
         time.sleep(2)
 
+        # Check file existence
         if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
             print(f"📤 Uploading {output_file} to Telegram...")
             await send_to_telegram(output_file)
