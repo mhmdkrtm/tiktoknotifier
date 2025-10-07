@@ -15,7 +15,7 @@ from telethon.errors import SessionPasswordNeededError, RPCError
 # --- Telegram Secrets ---
 TG_API_ID = 20196111               # ⚠️ YOUR TELEGRAM API ID (from my.telegram.org)
 TG_API_HASH = "05b184f5623850b5666c32e14e7a888b"     # ⚠️ YOUR TELEGRAM API HASH
-TG_BOT_TOKEN = "AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"        # ⚠️ YOUR TELEGRAM BOT TOKEN
+TG_BOT_TOKEN = "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"        # ⚠️ YOUR TELEGRAM BOT TOKEN
 MY_USER_ID = 1280121045            # ⚠️ YOUR PERSONAL CHAT ID (e.g., your saved messages ID or private chat ID)
 
 # --- General Config ---
