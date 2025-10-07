@@ -1,31 +1,28 @@
 import os
-import asyncio
 import subprocess
 import time
 from datetime import datetime
-from telethon import TelegramClient
 
-# Telegram setup
-TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", ""))
-TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
-SESSION_FILE = "tg_session.session"
-TMP_DIR = os.getenv("RAILWAY_TMP", "tmp")
+# Full absolute path to your tmp directory inside Railway
+TMP_DIR = os.path.join(os.getcwd(), "tiktoknotifier", "tmp")
+
+# Ensure folder exists
 os.makedirs(TMP_DIR, exist_ok=True)
 
-# Telethon client (to send videos)
-tg_client = TelegramClient(SESSION_FILE, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+def record_tiktok(username, duration_minutes=10):
+    """
+    Record a TikTok live stream for a given username and duration.
+    Splits recordings into chunks and stores temporarily in tmp folder.
+    """
 
-async def send_to_telegram(file_path):
-    async with tg_client:
-        await tg_client.send_file("me", file_path, caption=f"🎥 TikTok chunk: {os.path.basename(file_path)}")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{username}_{timestamp}.mp4"
+    filepath = os.path.join(TMP_DIR, filename)
 
-async def record_chunks(username):
-    """Run tiktok-live-recorder for 10-minute chunks"""
-    while True:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(TMP_DIR, f"{username}_{timestamp}.mp4")
+    print(f"🎬 Starting {duration_minutes}-minute recording for @{username} → {filepath}")
 
-        print(f"🎬 Starting 10-minute recording for @{username} → {output_file}")
+    try:
+        # Call DouyinLiveRecorder submodule correctly
         process = subprocess.Popen(
             [
                 "python3",
@@ -39,44 +36,18 @@ async def record_chunks(username):
             stderr=subprocess.PIPE
         )
 
-
-        # Record for 10 minutes (600 seconds)
-        try:
-            await asyncio.sleep(30)
-        except asyncio.CancelledError:
-            process.terminate()
-            raise
-
-        # Stop recorder
+        # Run for duration_minutes then stop
+        time.sleep(duration_minutes * 60)
         process.terminate()
-        time.sleep(2)
 
-        print("TMP content after recording:", os.listdir(TMP_DIR))
-        
-        latest_files = sorted(
-            [os.path.join(TMP_DIR, f) for f in os.listdir(TMP_DIR)],
-            key=os.path.getmtime,
-            reverse=True
-        )
-        if latest_files:
-            output_file = latest_files[0]
-            print(f"📤 Uploading {output_file} to Telegram…")
-            await send_to_telegram(output_file)
-            os.remove(output_file)
-            print(f"🧹 Deleted {output_file}")
-        else:
-            print(f"⚪ No file found for @{username}. Possibly user not live or args incorrect.")
+        # Give recorder time to finalize the file
+        time.sleep(3)
 
-        # Upload and clean up
-        if os.path.exists(output_file):
-            print(f"📤 Uploading {output_file} to Telegram…")
-            await send_to_telegram(output_file)
-            os.remove(output_file)
-            print(f"🧹 Deleted {output_file}")
+        # Check contents of TMP_DIR
+        files = os.listdir(TMP_DIR)
+        print(f"TMP content after recording: {files}")
 
-async def main():
-    username = "example_user"  # Replace or pass dynamically
-    await record_chunks(username)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        # Return the most recent file (if any)
+        mp4_files = [f for f in files if username in f and f.endswith(('.mp4', '.flv'))]
+        if not mp4_files:
+            print(f"⚪ No file found for @{username}. Possibly user not live or ar
