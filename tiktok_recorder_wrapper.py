@@ -1,7 +1,6 @@
 import os
 import asyncio
 import subprocess
-import time
 from datetime import datetime
 from telegram import Bot
 
@@ -12,7 +11,6 @@ TMP_DIR = os.getenv("RAILWAY_TMP", "tmp")
 os.makedirs(TMP_DIR, exist_ok=True)
 
 bot = Bot(token=TELEGRAM_TOKEN)
-
 
 # --- Helper: Send to Telegram ---
 async def send_to_telegram(file_path):
@@ -30,7 +28,6 @@ async def send_to_telegram(file_path):
     except Exception as e:
         print(f"❌ Telegram upload failed: {e}")
 
-
 # --- Helper: Run subprocess ---
 def run_cmd(cmd):
     try:
@@ -43,18 +40,15 @@ def run_cmd(cmd):
         print(f"❌ Error executing command: {e}")
         return False
 
-
 # --- Main Recorder Function ---
 async def record_tiktok_live(username):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_filename = f"{username}_{timestamp}.mp4"
-    base_path = os.path.join(TMP_DIR, base_filename)
+    base_path = os.path.join(TMP_DIR, f"{username}_{timestamp}.mp4")
 
     print(f"🎬 Starting TikTok live recording for @{username}...")
 
     # --- Step 1: Try yt-dlp to get the live URL ---
     try:
-        print("🔍 Getting stream URL using yt-dlp...")
         yt_cmd = [
             "yt-dlp",
             f"https://www.tiktok.com/@{username}/live",
@@ -70,7 +64,8 @@ async def record_tiktok_live(username):
         print(f"⚠️ Failed to fetch stream URL with yt-dlp: {e}")
         stream_url = None
 
-    # --- Step 2: Try to record using yt-dlp (best) ---
+    # --- Step 2: Try to record using yt-dlp ---
+    success = False
     if stream_url:
         output_pattern = os.path.join(TMP_DIR, f"{username}_part_%03d.mp4")
         yt_record_cmd = [
@@ -83,14 +78,8 @@ async def record_tiktok_live(username):
             stream_url,
         ]
         success = run_cmd(yt_record_cmd)
-        if success:
-            print("✅ yt-dlp recording completed.")
-        else:
-            print("⚠️ yt-dlp recording failed, falling back...")
-    else:
-        success = False
 
-    # --- Step 3: Try Streamlink fallback ---
+    # --- Step 3: Streamlink fallback ---
     if not success:
         streamlink_cmd = [
             "streamlink",
@@ -101,14 +90,9 @@ async def record_tiktok_live(username):
             "--hls-live-restart",
         ]
         success = run_cmd(streamlink_cmd)
-        if success:
-            print("✅ Recorded using Streamlink.")
-        else:
-            print("⚠️ Streamlink failed, trying ffmpeg...")
 
-    # --- Step 4: Try ffmpeg fallback ---
+    # --- Step 4: ffmpeg fallback ---
     if not success and stream_url:
-        print("🎥 Trying ffmpeg fallback ...")
         ffmpeg_cmd = [
             "ffmpeg",
             "-y",
@@ -119,24 +103,16 @@ async def record_tiktok_live(username):
             "-f",
             "segment",
             "-segment_time",
-            "600",  # 10 minutes per chunk
+            "600",
             "-reset_timestamps",
             "1",
             os.path.join(TMP_DIR, f"{username}_part_%03d.mp4"),
         ]
         run_cmd(ffmpeg_cmd)
 
-    # --- Step 5: Upload all found chunks ---
-    print("📦 Uploading chunks to Telegram ...")
+    # --- Step 5: Upload chunks ---
     for file in sorted(os.listdir(TMP_DIR)):
         if file.startswith(username) and file.endswith(".mp4"):
-            full_path = os.path.join(TMP_DIR, file)
-            await send_to_telegram(full_path)
+            await send_to_telegram(os.path.join(TMP_DIR, file))
 
     print(f"✅ Finished all tasks for @{username}.")
-
-
-# --- Entry Point for run.py ---
-if __name__ == "__main__":
-    username = os.getenv("USERNAME", "testuser")
-    asyncio.run(record_tiktok_live(username))
