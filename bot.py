@@ -2,11 +2,11 @@ import os
 import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from tiktok_recorder_wrapper import record_tiktok_live
+from wrapper import record_tiktok_live
 
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("❌ TELEGRAM_TOKEN not set in environment variables")
+    raise ValueError("❌ TELEGRAM_TOKEN not set")
 
 active_tasks = {}
 
@@ -41,15 +41,14 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❗ Usage: /stop <username>")
         return
-
     username = context.args[0].replace("@", "")
     task = active_tasks.get(username)
-    if task:
-        task.cancel()
-        del active_tasks[username]
-        await update.message.reply_text(f"🛑 Stopped recording @{username}")
-    else:
+    if not task:
         await update.message.reply_text(f"⚪ No active recording for @{username}")
+        return
+    task.cancel()
+    del active_tasks[username]
+    await update.message.reply_text(f"🛑 Stopped recording @{username}")
 
 async def run_bot():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -57,5 +56,8 @@ async def run_bot():
     app.add_handler(CommandHandler("record", record_command))
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("stop", stop_command))
-    print("🤖 Telegram bot running...")
-    await app.run_polling()
+
+    print("🤖 Bot is running...")
+    await app.start()
+    await app.updater.start_polling()
+    await app.wait_until_closed()
