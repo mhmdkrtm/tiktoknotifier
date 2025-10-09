@@ -10,76 +10,92 @@ TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
 SESSION_FILE = "tg_session.session"
 
-# ✅ Use Zeabur’s safe tmp directory
-TMP_DIR = "/tmp"
+TMP_DIR = os.getenv("RAILWAY_TMP", "tmp")
 os.makedirs(TMP_DIR, exist_ok=True)
 
-# --- TELETHON CLIENT ---
 tg_client = TelegramClient(SESSION_FILE, TELEGRAM_API_ID, TELEGRAM_API_HASH)
 
-
 async def send_to_telegram(file_path: str):
-    """Send a recorded file to Telegram Saved Messages."""
+    """Uploads file to Telegram Saved Messages."""
     async with tg_client:
-        await tg_client.send_file(
-            "me",
-            file_path,
-            caption=f"🎥 TikTok Live chunk: {os.path.basename(file_path)}"
-        )
-    print(f"✅ Uploaded to Telegram → {os.path.basename(file_path)}")
-
+        await tg_client.send_file("me", file_path, caption=f"🎥 TikTok chunk: {os.path.basename(file_path)}")
 
 async def record_tiktok(username: str, duration_seconds: int = 20):
     """
-    Record TikTok Live in short chunks, upload to Telegram, then delete the file.
-    Automatically retries until stopped.
+    Record TikTok Live using 3 fallbacks:
+    1️⃣ yt-dlp
+    2️⃣ ffmpeg
+    3️⃣ Michele's tiktok-live-recorder submodule
     """
     while True:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = os.path.join(TMP_DIR, f"{username}_{timestamp}.flv")
+        success = False
 
-        print(f"🎬 Starting {duration_seconds}-second recording for @{username}")
-        print("Working directory:", os.getcwd())
+        print(f"🎬 Starting {duration_seconds}s recording for @{username}")
 
-        # ✅ Use absolute path for the submodule’s main.py
-        recorder_path = os.path.join(os.getcwd(), "tiktok-live-recorder", "main.py")
+        # --- 1️⃣ Try yt-dlp ---
+        ytdlp_cmd = [
+            "yt-dlp",
+            f"https://www.tiktok.com/@{username}/live",
+            "-o", output_file,
+            "--no-part",
+            "--quiet",
+            "--live-from-start"
+        ]
+        print(f"⚙️ Trying yt-dlp for @{username}...")
+        ytdlp_proc = subprocess.Popen(ytdlp_cmd)
+        await asyncio.sleep(duration_seconds)
+        ytdlp_proc.terminate()
+        await asyncio.sleep(2)
 
-        process = subprocess.Popen(
-            ["python3", recorder_path, "--u", username, "--o", output_file],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 100_000:
+            success = True
+            print(f"✅ yt-dlp succeeded for @{username}")
 
-        try:
+        # --- 2️⃣ Fallback: ffmpeg ---
+        if not success:
+            print(f"⚪ yt-dlp failed. Trying ffmpeg capture...")
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-t", str(duration_seconds),
+                "-i", f"https://www.tiktok.com/@{username}/live",
+                "-c", "copy", output_file
+            ]
+            ffmpeg_proc = subprocess.Popen(ffmpeg_cmd)
+            ffmpeg_proc.wait()
+
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 100_000:
+                success = True
+                print(f"✅ ffmpeg succeeded for @{username}")
+
+        # --- 3️⃣ Final fallback: Michele’s tiktok-live-recorder submodule ---
+        if not success:
+            print(f"⚪ ffmpeg failed. Trying tiktok-live-recorder submodule...")
+            recorder_cmd = [
+                "python3", "tiktok-live-recorder/main.py",
+                "--u", username,
+                "--o", output_file
+            ]
+            recorder_proc = subprocess.Popen(recorder_cmd)
             await asyncio.sleep(duration_seconds)
-        except asyncio.CancelledError:
-            print(f"🛑 Recording for @{username} was stopped manually.")
-            process.terminate()
-            raise
+            recorder_proc.terminate()
+            await asyncio.sleep(2)
 
-        # Gracefully stop the process
-        process.terminate()
-        time.sleep(2)
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 100_000:
+                success = True
+                print(f"✅ Submodule recorder succeeded for @{username}")
 
-        # --- Check if file exists and upload ---
-        if os.path.exists(output_file):
-            size = os.path.getsize(output_file)
-            if size > 0:
-                print(f"📤 Uploading {output_file} ({size/1024:.1f} KB)...")
-                try:
-                    await send_to_telegram(output_file)
-                except Exception as e:
-                    print(f"❌ Upload failed: {e}")
-                finally:
-                    try:
-                        os.remove(output_file)
-                        print(f"🧹 Deleted {output_file}")
-                    except Exception as e:
-                        print(f"⚠️ Couldn’t delete {output_file}: {e}")
-            else:
-                print(f"⚪ Empty file created for @{username}, skipping upload.")
+        # --- Upload and Cleanup ---
+        if success:
+            print(f"📤 Uploading {output_file} to Telegram...")
+            await send_to_telegram(output_file)
+            try:
                 os.remove(output_file)
+                print(f"🧹 Deleted {output_file}")
+            except Exception as e:
+                print(f"⚠️ Cleanup failed: {e}")
         else:
-            print(f"⚪ No file found for @{username}. User might not be live or path issue.")
+            print(f"❌ All recorders failed for @{username}. Maybe not live or invalid URL.")
 
-        await asyncio.sleep(5)  # small pause before next chunk
+        await asyncio.sleep(5)  # Cooldown before retry
