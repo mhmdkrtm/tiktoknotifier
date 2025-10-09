@@ -33,7 +33,7 @@ async def record_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🎥 Starting recording for @{username} ...")
 
     # Start async recording task (20s chunks)
-    task = asyncio.create_task(record_tiktok_live(username))
+    task = asyncio.create_task(record_tiktok(username))
     active_tasks[username] = task
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
