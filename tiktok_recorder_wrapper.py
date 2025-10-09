@@ -43,11 +43,12 @@ def run_cmd(cmd):
 # --- Main Recorder Function ---
 async def record_tiktok_live(username):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_path = os.path.join(TMP_DIR, f"{username}_{timestamp}.mp4")
+    base_filename = f"{username}_{timestamp}.mp4"
+    base_path = os.path.join(TMP_DIR, base_filename)
 
     print(f"🎬 Starting TikTok live recording for @{username}...")
 
-    # --- Step 1: Try yt-dlp to get the live URL ---
+    # Step 1: Get live stream URL via yt-dlp
     try:
         yt_cmd = [
             "yt-dlp",
@@ -64,7 +65,7 @@ async def record_tiktok_live(username):
         print(f"⚠️ Failed to fetch stream URL with yt-dlp: {e}")
         stream_url = None
 
-    # --- Step 2: Try to record using yt-dlp ---
+    # Step 2: Try yt-dlp recording
     success = False
     if stream_url:
         output_pattern = os.path.join(TMP_DIR, f"{username}_part_%03d.mp4")
@@ -78,8 +79,10 @@ async def record_tiktok_live(username):
             stream_url,
         ]
         success = run_cmd(yt_record_cmd)
+        if success:
+            print("✅ yt-dlp recording completed.")
 
-    # --- Step 3: Streamlink fallback ---
+    # Step 3: Streamlink fallback
     if not success:
         streamlink_cmd = [
             "streamlink",
@@ -91,28 +94,23 @@ async def record_tiktok_live(username):
         ]
         success = run_cmd(streamlink_cmd)
 
-    # --- Step 4: ffmpeg fallback ---
+    # Step 4: ffmpeg fallback
     if not success and stream_url:
         ffmpeg_cmd = [
             "ffmpeg",
             "-y",
-            "-i",
-            stream_url,
-            "-c",
-            "copy",
-            "-f",
-            "segment",
-            "-segment_time",
-            "600",
-            "-reset_timestamps",
-            "1",
+            "-i", stream_url,
+            "-c", "copy",
+            "-f", "segment",
+            "-segment_time", "600",  # 10 minutes per chunk
+            "-reset_timestamps", "1",
             os.path.join(TMP_DIR, f"{username}_part_%03d.mp4"),
         ]
         run_cmd(ffmpeg_cmd)
 
-    # --- Step 5: Upload chunks ---
+    # Step 5: Upload chunks
     for file in sorted(os.listdir(TMP_DIR)):
         if file.startswith(username) and file.endswith(".mp4"):
             await send_to_telegram(os.path.join(TMP_DIR, file))
 
-    print(f"✅ Finished all tasks for @{username}.")
+    print(f"✅ Finished recording @{username}.")
