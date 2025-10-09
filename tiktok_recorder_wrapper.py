@@ -6,7 +6,7 @@ from datetime import datetime
 from telethon import TelegramClient
 
 # --- TELEGRAM SETUP ---
-TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
+TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", ""))
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
 SESSION_FILE = "tg_session.session"
 
@@ -15,87 +15,103 @@ os.makedirs(TMP_DIR, exist_ok=True)
 
 tg_client = TelegramClient(SESSION_FILE, TELEGRAM_API_ID, TELEGRAM_API_HASH)
 
-async def send_to_telegram(file_path: str):
-    """Uploads file to Telegram Saved Messages."""
+# --- Helper: Send file to Telegram ---
+async def send_to_telegram(file_path):
     async with tg_client:
-        await tg_client.send_file("me", file_path, caption=f"🎥 TikTok chunk: {os.path.basename(file_path)}")
+        await tg_client.send_file(
+            "me",
+            file_path,
+            caption=f"🎥 TikTok Live chunk: {os.path.basename(file_path)}"
+        )
 
-async def record_tiktok(username: str, duration_seconds: int = 20):
-    """
-    Record TikTok Live using 3 fallbacks:
-    1️⃣ yt-dlp
-    2️⃣ ffmpeg
-    3️⃣ Michele's tiktok-live-recorder submodule
-    """
+# --- Helper: Run shell command safely ---
+def run_command(cmd):
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0:
+            return result.stdout.strip()
+        print(f"[!] Command failed: {' '.join(cmd)}\n{result.stderr}")
+        return None
+    except Exception as e:
+        print(f"[!] Error running command: {e}")
+        return None
+
+# --- Core: Get TikTok live stream URL ---
+def get_live_url(username):
+    url = f"https://www.tiktok.com/@{username}/live"
+    print(f"🔍 Checking live URL for @{username} ...")
+    live_url = run_command(["yt-dlp", "-g", url])
+    if live_url:
+        print(f"✅ Got real live URL for @{username}")
+        return live_url
+    print(f"⚪ yt-dlp failed to get live URL for @{username}")
+    return None
+
+# --- Core: Try multiple recording methods ---
+def try_record(live_url, output_file, duration):
+    """Try yt-dlp, streamlink, then ffmpeg sequentially."""
+    print(f"🎬 Recording {duration}s chunk → {output_file}")
+
+    # 1️⃣ yt-dlp direct record
+    try:
+        cmd = ["yt-dlp", "-o", output_file, "--hls-use-mpegts", "--live-from-start", "-f", "best", live_url]
+        print("▶️ Trying yt-dlp ...")
+        subprocess.run(cmd, timeout=duration, check=False)
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 100000:
+            return True
+    except Exception as e:
+        print(f"❌ yt-dlp error: {e}")
+
+    # 2️⃣ streamlink fallback
+    try:
+        cmd = ["streamlink", "--hls-duration", str(duration), live_url, "best", "-o", output_file]
+        print("▶️ Trying streamlink ...")
+        subprocess.run(cmd, timeout=duration + 10, check=False)
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 100000:
+            return True
+    except Exception as e:
+        print(f"❌ streamlink error: {e}")
+
+    # 3️⃣ ffmpeg fallback
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", live_url, "-t", str(duration),
+            "-c", "copy", "-f", "flv", output_file
+        ]
+        print("▶️ Trying ffmpeg ...")
+        subprocess.run(cmd, timeout=duration + 10, check=False)
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 100000:
+            return True
+    except Exception as e:
+        print(f"❌ ffmpeg error: {e}")
+
+    print("⚠️ All recorders failed.")
+    return False
+
+# --- Main recording loop ---
+async def record_tiktok(username, duration_seconds=20):
+    """Record TikTok Live in chunks and upload to Telegram."""
     while True:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(TMP_DIR, f"{username}_{timestamp}.flv")
-        success = False
+        output_file = os.path.join(TMP_DIR, f"{username}_{timestamp}.mp4")
 
-        print(f"🎬 Starting {duration_seconds}s recording for @{username}")
+        live_url = get_live_url(username)
+        if not live_url:
+            print(f"⚪ @{username} might not be live or TikTok blocked extraction.")
+            await asyncio.sleep(15)
+            continue
 
-        # --- 1️⃣ Try yt-dlp ---
-        ytdlp_cmd = [
-            "yt-dlp",
-            f"https://www.tiktok.com/@{username}/live",
-            "-o", output_file,
-            "--no-part",
-            "--quiet",
-            "--live-from-start"
-        ]
-        print(f"⚙️ Trying yt-dlp for @{username}...")
-        ytdlp_proc = subprocess.Popen(ytdlp_cmd)
-        await asyncio.sleep(duration_seconds)
-        ytdlp_proc.terminate()
-        await asyncio.sleep(2)
+        success = try_record(live_url, output_file, duration_seconds)
 
-        if os.path.exists(output_file) and os.path.getsize(output_file) > 100_000:
-            success = True
-            print(f"✅ yt-dlp succeeded for @{username}")
-
-        # --- 2️⃣ Fallback: ffmpeg ---
-        if not success:
-            print(f"⚪ yt-dlp failed. Trying ffmpeg capture...")
-            ffmpeg_cmd = [
-                "ffmpeg", "-y",
-                "-t", str(duration_seconds),
-                "-i", f"https://www.tiktok.com/@{username}/live",
-                "-c", "copy", output_file
-            ]
-            ffmpeg_proc = subprocess.Popen(ffmpeg_cmd)
-            ffmpeg_proc.wait()
-
-            if os.path.exists(output_file) and os.path.getsize(output_file) > 100_000:
-                success = True
-                print(f"✅ ffmpeg succeeded for @{username}")
-
-        # --- 3️⃣ Final fallback: Michele’s tiktok-live-recorder submodule ---
-        if not success:
-            print(f"⚪ ffmpeg failed. Trying tiktok-live-recorder submodule...")
-            recorder_cmd = [
-                "python3", "tiktok-live-recorder/main.py",
-                "--u", username,
-                "--o", output_file
-            ]
-            recorder_proc = subprocess.Popen(recorder_cmd)
-            await asyncio.sleep(duration_seconds)
-            recorder_proc.terminate()
-            await asyncio.sleep(2)
-
-            if os.path.exists(output_file) and os.path.getsize(output_file) > 100_000:
-                success = True
-                print(f"✅ Submodule recorder succeeded for @{username}")
-
-        # --- Upload and Cleanup ---
         if success:
-            print(f"📤 Uploading {output_file} to Telegram...")
-            await send_to_telegram(output_file)
+            print(f"📤 Uploading {output_file} to Telegram ...")
             try:
+                await send_to_telegram(output_file)
                 os.remove(output_file)
                 print(f"🧹 Deleted {output_file}")
             except Exception as e:
-                print(f"⚠️ Cleanup failed: {e}")
+                print(f"❌ Telegram upload failed: {e}")
         else:
-            print(f"❌ All recorders failed for @{username}. Maybe not live or invalid URL.")
+            print(f"⚪ No valid recording for @{username}")
 
-        await asyncio.sleep(5)  # Cooldown before retry
+        await asyncio.sleep(5)
