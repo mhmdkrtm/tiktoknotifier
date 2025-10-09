@@ -2,6 +2,7 @@ import os
 import asyncio
 import subprocess
 import time
+import glob
 from datetime import datetime
 from telethon import TelegramClient
 
@@ -10,48 +11,84 @@ TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", ""))
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
 SESSION_FILE = "tg_session.session"
 
-# Create tmp dir (for Railway ephemeral storage)
+# Create tmp dir (for Railway / local storage)
 TMP_DIR = os.getenv("RAILWAY_TMP", "tmp")
 os.makedirs(TMP_DIR, exist_ok=True)
 
 tg_client = TelegramClient(SESSION_FILE, TELEGRAM_API_ID, TELEGRAM_API_HASH)
 
+
+# --- SEND TO TELEGRAM ---
 async def send_to_telegram(file_path):
-    """Send a file to Saved Messages."""
+    """Send a file to Telegram Saved Messages."""
     async with tg_client:
-        await tg_client.send_file("me", file_path, caption=f"🎥 TikTok chunk: {os.path.basename(file_path)}")
+        await tg_client.send_file(
+            "me",
+            file_path,
+            caption=f"🎥 TikTok Live chunk: {os.path.basename(file_path)}",
+        )
 
+
+# --- MAIN RECORDING LOOP ---
 async def record_tiktok(username, duration_seconds=20):
-    """Record TikTok Live in 20-second chunks and upload to Telegram."""
+    """
+    Record TikTok Live in chunks and upload each to Telegram.
+
+    Steps:
+      - Run the tiktok-live-recorder submodule for <duration_seconds>
+      - Stop the recorder
+      - Upload any new video files to Telegram
+      - Clean up and repeat
+    """
+
     while True:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(TMP_DIR, f"{username}_{timestamp}.flv")
+        print(f"🎬 Checking @{username} live status and starting recording chunk...")
 
-        print(f"🎬 Starting {duration_seconds}-second recording for @{username} → {output_file}")
-
-        # Run the TikTok recorder from the submodule
+        # Start the TikTok recorder submodule
         process = subprocess.Popen(
-            ["python3", "tiktok-live-recorder/main.py", "--u", username, "--o", output_file],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            [
+                "python3",
+                "tiktok-live-recorder/main.py",
+                "--url",
+                f"https://www.tiktok.com/@{username}/live",
+                "--output",
+                TMP_DIR,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
 
         try:
+            # Record for N seconds
             await asyncio.sleep(duration_seconds)
         except asyncio.CancelledError:
             process.terminate()
             raise
 
-        # Stop recorder after duration
+        # Stop recorder gracefully
         process.terminate()
         time.sleep(2)
 
-        # Check file existence
-        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-            print(f"📤 Uploading {output_file} to Telegram...")
-            await send_to_telegram(output_file)
-            os.remove(output_file)
-            print(f"🧹 Deleted {output_file}")
-        else:
-            print(f"⚪ No file found for @{username}. Possibly user not live or args incorrect.")
+        # Find the most recent file
+        files = sorted(
+            glob.glob(os.path.join(TMP_DIR, "*.flv"))
+            + glob.glob(os.path.join(TMP_DIR, "*.mp4")),
+            key=os.path.getmtime,
+            reverse=True,
+        )
 
-        await asyncio.sleep(5)  # small pause before next chunk
+        if files:
+            latest_file = files[0]
+            size = os.path.getsize(latest_file)
+            if size > 0:
+                print(f"📤 Uploading {latest_file} to Telegram ({size / 1024:.1f} KB)...")
+                await send_to_telegram(latest_file)
+                os.remove(latest_file)
+                print(f"🧹 Deleted {latest_file}")
+            else:
+                print(f"⚪ File {latest_file} is empty, skipping.")
+        else:
+            print(f"⚪ No recorded files found for @{username}. Possibly user not live.")
+
+        # Small pause before next recording cycle
+        await asyncio.sleep(5)
