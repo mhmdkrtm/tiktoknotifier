@@ -2,7 +2,7 @@ import os
 import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from tiktok_recorder_wrapper import record_tiktok_live
+from tiktok_recorder_wrapper import record_tiktok_live as record_tiktok
 
 # --- CONFIG ---
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
