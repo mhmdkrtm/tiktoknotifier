@@ -7,8 +7,8 @@ from TikTokLive.events import ConnectEvent, DisconnectEvent
 
 # --- CONFIGURATION ---
 # NOTE: Using os.environ.get for deployment secrets (best practice)
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or "8348090543:AAG0cSjAFceozLxllCyCaWkRA9YPa55e_L4"
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or "1280121045"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN") or ""
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or ""
 USERS_FILE = "users.txt"
 CHECK_INTERVAL = 60  # seconds between retry attempts (for errors/offline users)
 SUCCESS_COOLDOWN = 300 # NEW: 5 minutes (300 seconds) cooldown after successful connection
