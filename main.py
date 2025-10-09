@@ -1,10 +1,9 @@
-import asyncio
 import os
+import asyncio
 import time
 import requests
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, DisconnectEvent
-from bot import run_bot
 from tiktok_recorder_wrapper import record_tiktok_live
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or ""
@@ -20,9 +19,7 @@ def send_telegram(msg: str):
         return
     try:
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}
-        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
-        if r.status_code == 200:
-            print("✅ Sent Telegram message.")
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json=payload, timeout=10)
     except Exception as e:
         print("❌ Telegram send failed:", e)
 
@@ -35,14 +32,14 @@ async def watch_user(username: str):
             continue
         try:
             client = TikTokLiveClient(unique_id=username)
+
             @client.on(ConnectEvent)
             async def on_connect(event):
                 nonlocal live_announced
                 print(f"[+] @{username} is LIVE (Room ID: {client.room_id})")
                 if not live_announced:
-                    send_telegram(f"🔴 <b>@{username} is now LIVE!</b>\n<a href='https://www.tiktok.com/@{username}/live'>Watch Now</a>")
+                    send_telegram(f"🔴 <b>@{username} is now LIVE!</b>\nhttps://www.tiktok.com/@{username}/live")
                     live_announced = True
-                    # auto-record
                     asyncio.create_task(record_tiktok_live(username))
 
             @client.on(DisconnectEvent)
@@ -53,31 +50,10 @@ async def watch_user(username: str):
                     send_telegram(f"⚪ @{username} has ended the live.")
                 live_announced = False
                 await client.disconnect()
+
             await client.start()
             last_success_time[username] = time.time()
         except Exception as e:
             print(f"[!] @{username} error: {e}. Retrying in {CHECK_INTERVAL}s...")
             live_announced = False
             await asyncio.sleep(CHECK_INTERVAL)
-
-async def main():
-    # Start bot first
-    asyncio.create_task(asyncio.to_thread(run_bot))
-
-    if not os.path.exists(USERS_FILE):
-        print(f"File '{USERS_FILE}' not found!")
-        return
-    with open(USERS_FILE, "r") as f:
-        users = [line.strip().replace('@', '') for line in f if line.strip() and not line.startswith('#')]
-    if not users:
-        print("No usernames found in users.txt")
-        return
-    print(f"🔥 Monitoring {len(users)} TikTok users: {', '.join(users)}")
-    tasks = [asyncio.create_task(watch_user(u)) for u in users]
-    await asyncio.gather(*tasks)
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nService interrupted and shutting down.")
