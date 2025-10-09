@@ -2,7 +2,7 @@ import os
 import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from tiktok_recorder_wrapper import record_tiktok
+from tiktok_recorder_wrapper import record_tiktok_live
 
 # --- CONFIG ---
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -33,7 +33,7 @@ async def record_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🎥 Starting recording for @{username} ...")
 
     # Start async recording task (20s chunks)
-    task = asyncio.create_task(record_tiktok(username))
+    task = asyncio.create_task(record_tiktok_live(username))
     active_tasks[username] = task
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
