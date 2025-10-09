@@ -2,93 +2,84 @@ import os
 import asyncio
 import subprocess
 import time
-import glob
 from datetime import datetime
 from telethon import TelegramClient
 
 # --- TELEGRAM SETUP ---
-TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", ""))
+TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
 SESSION_FILE = "tg_session.session"
 
-# Create tmp dir (for Railway / local storage)
-TMP_DIR = os.getenv("RAILWAY_TMP", "tmp")
+# ✅ Use Zeabur’s safe tmp directory
+TMP_DIR = "/tmp"
 os.makedirs(TMP_DIR, exist_ok=True)
 
+# --- TELETHON CLIENT ---
 tg_client = TelegramClient(SESSION_FILE, TELEGRAM_API_ID, TELEGRAM_API_HASH)
 
 
-# --- SEND TO TELEGRAM ---
-async def send_to_telegram(file_path):
-    """Send a file to Telegram Saved Messages."""
+async def send_to_telegram(file_path: str):
+    """Send a recorded file to Telegram Saved Messages."""
     async with tg_client:
         await tg_client.send_file(
             "me",
             file_path,
-            caption=f"🎥 TikTok Live chunk: {os.path.basename(file_path)}",
+            caption=f"🎥 TikTok Live chunk: {os.path.basename(file_path)}"
         )
+    print(f"✅ Uploaded to Telegram → {os.path.basename(file_path)}")
 
 
-# --- MAIN RECORDING LOOP ---
-async def record_tiktok(username, duration_seconds=20):
+async def record_tiktok(username: str, duration_seconds: int = 20):
     """
-    Record TikTok Live in chunks and upload each to Telegram.
-
-    Steps:
-      - Run the tiktok-live-recorder submodule for <duration_seconds>
-      - Stop the recorder
-      - Upload any new video files to Telegram
-      - Clean up and repeat
+    Record TikTok Live in short chunks, upload to Telegram, then delete the file.
+    Automatically retries until stopped.
     """
-
     while True:
-        print(f"🎬 Checking @{username} live status and starting recording chunk...")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(TMP_DIR, f"{username}_{timestamp}.flv")
 
-        # Start the TikTok recorder submodule
+        print(f"🎬 Starting {duration_seconds}-second recording for @{username}")
+        print("Working directory:", os.getcwd())
+
+        # ✅ Use absolute path for the submodule’s main.py
+        recorder_path = os.path.join(os.getcwd(), "tiktok-live-recorder", "main.py")
+
         process = subprocess.Popen(
-            [
-                "python3",
-                "tiktok-live-recorder/main.py",
-                "--url",
-                f"https://www.tiktok.com/@{username}/live",
-                "--output",
-                TMP_DIR,
-            ],
+            ["python3", recorder_path, "--u", username, "--o", output_file],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.PIPE
         )
 
         try:
-            # Record for N seconds
             await asyncio.sleep(duration_seconds)
         except asyncio.CancelledError:
+            print(f"🛑 Recording for @{username} was stopped manually.")
             process.terminate()
             raise
 
-        # Stop recorder gracefully
+        # Gracefully stop the process
         process.terminate()
         time.sleep(2)
 
-        # Find the most recent file
-        files = sorted(
-            glob.glob(os.path.join(TMP_DIR, "*.flv"))
-            + glob.glob(os.path.join(TMP_DIR, "*.mp4")),
-            key=os.path.getmtime,
-            reverse=True,
-        )
-
-        if files:
-            latest_file = files[0]
-            size = os.path.getsize(latest_file)
+        # --- Check if file exists and upload ---
+        if os.path.exists(output_file):
+            size = os.path.getsize(output_file)
             if size > 0:
-                print(f"📤 Uploading {latest_file} to Telegram ({size / 1024:.1f} KB)...")
-                await send_to_telegram(latest_file)
-                os.remove(latest_file)
-                print(f"🧹 Deleted {latest_file}")
+                print(f"📤 Uploading {output_file} ({size/1024:.1f} KB)...")
+                try:
+                    await send_to_telegram(output_file)
+                except Exception as e:
+                    print(f"❌ Upload failed: {e}")
+                finally:
+                    try:
+                        os.remove(output_file)
+                        print(f"🧹 Deleted {output_file}")
+                    except Exception as e:
+                        print(f"⚠️ Couldn’t delete {output_file}: {e}")
             else:
-                print(f"⚪ File {latest_file} is empty, skipping.")
+                print(f"⚪ Empty file created for @{username}, skipping upload.")
+                os.remove(output_file)
         else:
-            print(f"⚪ No recorded files found for @{username}. Possibly user not live.")
+            print(f"⚪ No file found for @{username}. User might not be live or path issue.")
 
-        # Small pause before next recording cycle
-        await asyncio.sleep(5)
+        await asyncio.sleep(5)  # small pause before next chunk
