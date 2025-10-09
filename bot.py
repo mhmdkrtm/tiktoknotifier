@@ -20,10 +20,12 @@ async def record_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❗ Usage: /record <username>")
         return
+
     username = context.args[0].replace("@", "")
     if username in active_tasks:
         await update.message.reply_text(f"⚠️ Already recording @{username}")
         return
+
     await update.message.reply_text(f"🎥 Starting recording for @{username} ...")
     task = asyncio.create_task(record_tiktok_live(username))
     active_tasks[username] = task
@@ -39,20 +41,21 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❗ Usage: /stop <username>")
         return
+
     username = context.args[0].replace("@", "")
     task = active_tasks.get(username)
-    if not task:
+    if task:
+        task.cancel()
+        del active_tasks[username]
+        await update.message.reply_text(f"🛑 Stopped recording @{username}")
+    else:
         await update.message.reply_text(f"⚪ No active recording for @{username}")
-        return
-    task.cancel()
-    del active_tasks[username]
-    await update.message.reply_text(f"🛑 Stopped recording @{username}")
 
-def run_bot():
+async def run_bot():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("record", record_command))
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("stop", stop_command))
-    print("🤖 Bot is running...")
-    app.run_polling()
+    print("🤖 Telegram bot running...")
+    await app.run_polling()
