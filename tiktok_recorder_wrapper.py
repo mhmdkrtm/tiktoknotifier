@@ -12,7 +12,7 @@ os.makedirs(TMP_DIR, exist_ok=True)
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# --- Helper: Send to Telegram ---
+# --- Helper: Send video to Telegram ---
 async def send_to_telegram(file_path):
     try:
         print(f"📤 Uploading {file_path} to Telegram ...")
@@ -28,7 +28,7 @@ async def send_to_telegram(file_path):
     except Exception as e:
         print(f"❌ Telegram upload failed: {e}")
 
-# --- Helper: Run subprocess ---
+# --- Helper: Run subprocess commands ---
 def run_cmd(cmd):
     try:
         print(f"⚙️ Running: {' '.join(cmd)}")
@@ -40,7 +40,7 @@ def run_cmd(cmd):
         print(f"❌ Error executing command: {e}")
         return False
 
-# --- Main Recorder Function ---
+# --- Main recording function ---
 async def record_tiktok_live(username):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_filename = f"{username}_{timestamp}.mp4"
@@ -48,7 +48,7 @@ async def record_tiktok_live(username):
 
     print(f"🎬 Starting TikTok live recording for @{username}...")
 
-    # Step 1: Get live stream URL via yt-dlp
+    # --- Step 1: Try yt-dlp to get live URL ---
     try:
         yt_cmd = [
             "yt-dlp",
@@ -65,52 +65,23 @@ async def record_tiktok_live(username):
         print(f"⚠️ Failed to fetch stream URL with yt-dlp: {e}")
         stream_url = None
 
-    # Step 2: Try yt-dlp recording
-    success = False
+    # --- Step 2: Record using ffmpeg (10-minute chunks) ---
     if stream_url:
-        output_pattern = os.path.join(TMP_DIR, f"{username}_part_%03d.mp4")
-        yt_record_cmd = [
-            "yt-dlp",
-            "--no-part",
-            "--no-warnings",
-            "--no-live-from-start",
-            "-o",
-            output_pattern,
-            stream_url,
-        ]
-        success = run_cmd(yt_record_cmd)
-        if success:
-            print("✅ yt-dlp recording completed.")
-
-    # Step 3: Streamlink fallback
-    if not success:
-        streamlink_cmd = [
-            "streamlink",
-            f"https://www.tiktok.com/@{username}/live",
-            "best",
-            "-o",
-            base_path,
-            "--hls-live-restart",
-        ]
-        success = run_cmd(streamlink_cmd)
-
-    # Step 4: ffmpeg fallback
-    if not success and stream_url:
         ffmpeg_cmd = [
             "ffmpeg",
             "-y",
             "-i", stream_url,
             "-c", "copy",
             "-f", "segment",
-            "-segment_time", "600",  # 10 minutes per chunk
+            "-segment_time", "600",  # 10 minutes
             "-reset_timestamps", "1",
             os.path.join(TMP_DIR, f"{username}_part_%03d.mp4"),
         ]
         run_cmd(ffmpeg_cmd)
 
-    # Step 5: Upload chunks
+    # --- Step 3: Upload all chunks ---
     for file in sorted(os.listdir(TMP_DIR)):
         if file.startswith(username) and file.endswith(".mp4"):
             await send_to_telegram(os.path.join(TMP_DIR, file))
 
-    print(f"✅ Finished recording @{username}.")
+    print(f"✅ Finished all tasks for @{username}.")
