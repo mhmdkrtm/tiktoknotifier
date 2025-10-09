@@ -4,7 +4,7 @@ import requests
 import time
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, DisconnectEvent
-from wrapper import record_tiktok_live
+from tiktok_recorder_wrapper import record_tiktok_live
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
