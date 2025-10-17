@@ -5,9 +5,11 @@ from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, JobQueue
 )
-from TikTokLive import TikTokLiveClient
-from TikTokLive.client.errors import FailedToConnect, AlreadyConnected
-from TikTokLive.types.errors import UserNotFoundError
+# --- FINAL, SAFEST IMPORTS ---
+# Import the client itself, and the errors directly from the top level
+from TikTokLive import TikTokLiveClient, FailedToConnect, UserNotFoundError
+# --- END FINAL, SAFEST IMPORTS ---
+
 
 # --- Configuration and Environment Variables ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -88,7 +90,7 @@ async def add_streamer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     # Attempt an initial check to validate the username
     try:
-        # Create a client with a short timeout to prevent blocking too long
+        # Client imported from top level
         client = TikTokLiveClient(unique_id=username, **{"timeout_ms": 5000}) 
         room_info = await client.retrieve_room_info()
         
@@ -169,8 +171,7 @@ async def check_tiktok_status(context: ContextTypes.DEFAULT_TYPE) -> None:
         is_currently_online = False
 
         try:
-            # We use retrieve_room_info to check for a room ID, which signals if a user is live.
-            # Set a timeout (e.g., 10 seconds) for the HTTP request to prevent the job from hanging.
+            # Client imported from top level
             client = TikTokLiveClient(unique_id=username, **{"timeout_ms": 10000}) 
             room_info = await client.retrieve_room_info()
             
@@ -183,8 +184,8 @@ async def check_tiktok_status(context: ContextTypes.DEFAULT_TYPE) -> None:
             del data["users"][username]
             updated = True
             continue
-        except (FailedToConnect, AlreadyConnected) as e:
-            # FailedToConnect typically means they are offline or a temporary issue.
+        except FailedToConnect as e:
+            # FailedToConnect imported from top level
             is_currently_online = False
         except Exception as e:
             logger.error(f"Unknown error checking status for {username}: {e}. Retaining last status.")
@@ -241,7 +242,7 @@ def main() -> None:
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    # Create the initial data file if it doesn't exist
+    # Create the initial data file if it doesn't exist (Critical for Docker build)
     if not os.path.exists(DATA_FILE):
         save_data({"users": {}})
     main()
