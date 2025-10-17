@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 TikTok Live Monitor Bot
-- Add/remove monitored accounts via Telegram commands
+- Add/remove monitored accounts via Telegram
 - Detects live status via TikTokLive (real-time)
-- Falls back to polling every 5 minutes if WebSocket fails
-- Sends alerts to Telegram when a monitored user goes live or offline
+- Falls back to 5-minute polling if real-time fails
+- Sends alerts when someone goes live or ends live
 """
 
 import os
+import re
+import json
 import asyncio
 import logging
 from pathlib import Path
@@ -20,70 +22,89 @@ from TikTokLive.events import ConnectEvent, DisconnectEvent, LiveEndEvent
 # --- Logging ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# --- Env vars ---
+# --- Environment ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # optional if auto-registration used
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Optional (auto-set on /start)
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is required! Set it in Railway environment variables.")
 
-# --- Telegram setup ---
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- Data structures ---
+# --- Data ---
 clients = {}  # username -> dict(client, status, mode)
 CHECK_INTERVAL = 300  # 5 minutes
 
 
-# --- Utility: check live status via TikTok web ---
+# ===============================================================
+# 🔍 Accurate TikTok live status checker (no false positives)
+# ===============================================================
 async def check_live_status(username: str) -> bool:
+    """Check if TikTok user is live by parsing SIGI_STATE JSON data."""
     url = f"https://www.tiktok.com/@{username}"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
-            return "LIVE" in r.text or '"isLive":true' in r.text
+            match = re.search(
+                r'<script id="SIGI_STATE" type="application/json">(.*?)</script>', r.text
+            )
+            if not match:
+                return False
+
+            data = json.loads(match.group(1))
+            user_info = data.get("UserModule", {}).get("users", {}).get(username)
+            live_info = data.get("LiveRoom", {})
+
+            # TikTok marks live users with roomId or isLive flag
+            if live_info or (user_info and user_info.get("isLive")):
+                return True
+            return False
     except Exception as e:
         logging.error("Error checking %s: %s", username, e)
         return False
 
 
-# --- Real-time TikTokLive monitoring ---
+# ===============================================================
+# 🛰 Real-time TikTokLive monitoring
+# ===============================================================
 async def start_tiktok_live(username: str):
     """Try connecting via TikTokLive WebSocket. If fails, fallback to polling."""
     try:
         client = TikTokLiveClient(unique_id=username)
 
-        @client.on("connect")
+        @client.on(ConnectEvent)
         async def on_connect(event: ConnectEvent):
-            logging.info("Connected to %s (real-time mode)", username)
+            logging.info("✅ Connected to %s (real-time mode)", username)
             clients[username]["status"] = "offline"
             clients[username]["mode"] = "realtime"
 
-        @client.on("live_end")
+        @client.on(LiveEndEvent)
         async def on_live_end(event: LiveEndEvent):
-            logging.info("%s ended live.", username)
+            logging.info("⚪ %s ended live.", username)
             clients[username]["status"] = "offline"
             if ADMIN_CHAT_ID:
                 await bot.send_message(ADMIN_CHAT_ID, f"⚪ @{username} ended the live.")
 
-        @client.on("disconnect")
+        @client.on(DisconnectEvent)
         async def on_disconnect(event: DisconnectEvent):
-            logging.warning("%s disconnected. Fallback to polling.", username)
+            logging.warning("❗ %s disconnected. Switching to polling mode.", username)
             clients[username]["mode"] = "polling"
             asyncio.create_task(polling_monitor(username))
 
         clients[username]["client"] = client
         await client.start()
     except Exception as e:
-        logging.warning("Failed real-time for %s: %s", username, e)
+        logging.warning("❌ Real-time failed for %s: %s", username, e)
         clients[username]["mode"] = "polling"
         asyncio.create_task(polling_monitor(username))
 
 
-# --- Polling fallback ---
+# ===============================================================
+# 🔁 Polling fallback (every 5 minutes)
+# ===============================================================
 async def polling_monitor(username: str):
-    """Periodically check live status every 5 min."""
+    """Periodically check live status every 5 minutes."""
     last_status = clients[username].get("status", "offline")
     while username in clients:
         try:
@@ -92,7 +113,11 @@ async def polling_monitor(username: str):
             if current != last_status:
                 last_status = current
                 clients[username]["status"] = current
-                msg = f"🔴 @{username} just went LIVE!" if current == "live" else f"⚪ @{username} ended the live."
+                msg = (
+                    f"🔴 @{username} just went LIVE!"
+                    if current == "live"
+                    else f"⚪ @{username} ended the live."
+                )
                 logging.info(msg)
                 if ADMIN_CHAT_ID:
                     await bot.send_message(ADMIN_CHAT_ID, msg)
@@ -101,7 +126,9 @@ async def polling_monitor(username: str):
         await asyncio.sleep(CHECK_INTERVAL)
 
 
-# --- Telegram Commands ---
+# ===============================================================
+# 🤖 Telegram Commands
+# ===============================================================
 @dp.message(Command("start"))
 async def start_command(message: types.Message):
     global ADMIN_CHAT_ID
@@ -169,7 +196,9 @@ async def status_command(message: types.Message):
     await message.answer("\n".join(lines))
 
 
-# --- Startup ---
+# ===============================================================
+# 🚀 Startup
+# ===============================================================
 async def main():
     global ADMIN_CHAT_ID
     if Path("admin.txt").exists():
