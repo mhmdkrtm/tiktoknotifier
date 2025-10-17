@@ -15,7 +15,7 @@ import httpx
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from TikTokLive import TikTokLiveClient
-from TikTokLive.types.events import ConnectEvent, DisconnectEvent, LiveEndEvent
+from TikTokLive.events import ConnectEvent, DisconnectEvent, LiveEndEvent
 
 # --- Logging ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
