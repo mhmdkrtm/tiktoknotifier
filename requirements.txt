@@ -1,6 +1,2 @@
-aiogram
+python-telegram-bot
 TikTokLive
-aiosqlite
-aiohttp
-requests
-yt-dlp
