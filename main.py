@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-TikTok Live Monitor Bot (yt-dlp version)
-- Monitors TikTok users via yt-dlp
-- Prints ONLINE if stream is live, OFFLINE if not
+TikTok Live Monitor Bot
+- Monitors TikTok users by checking actual live JSON data
+- Fallback polling every 5 minutes
 - Sends Telegram notifications
-- Polls every 5 minutes
 """
 
 import os
 import asyncio
 import logging
-import subprocess
+import json
+import re
+import httpx
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
@@ -29,18 +30,31 @@ monitored_users = {}  # {username: {"live": False}}
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 
-# ---------------- HELPER FUNCTION ----------------
-def is_tiktok_live(username: str) -> bool:
-    """Check if TikTok user is live using yt-dlp."""
+# ---------------- HELPER FUNCTIONS ----------------
+async def check_live_status(username: str) -> bool:
+    """Check if a TikTok user is currently live by parsing page JSON."""
     url = f"https://www.tiktok.com/@{username}"
     try:
-        subprocess.run(
-            ["yt-dlp", "--skip-download", "--quiet", url],
-            check=True,
-            capture_output=True
-        )
-        return True
-    except subprocess.CalledProcessError:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            match = re.search(
+                r'<script id="SIGI_STATE" type="application/json">(.*?)</script>',
+                r.text
+            )
+            if not match:
+                return False
+            data = json.loads(match.group(1))
+            # Check actual live room info
+            live_info = data.get("LiveRoom", {})
+            if live_info:  # streaming info exists → live
+                return True
+            # Fallback: check isLive in UserModule
+            user_info = data.get("UserModule", {}).get("users", {}).get(username)
+            if user_info and user_info.get("isLive"):
+                return True
+            return False
+    except Exception as e:
+        logging.error(f"❌ Error checking @{username}: {e}")
         return False
 
 
@@ -48,7 +62,7 @@ async def polling_monitor(username: str):
     """Check live status every POLL_INTERVAL seconds."""
     last_status = monitored_users[username].get("live", False)
     while username in monitored_users:
-        is_live = await asyncio.to_thread(is_tiktok_live, username)
+        is_live = await check_live_status(username)
         if is_live != last_status:
             last_status = is_live
             monitored_users[username]["live"] = is_live
@@ -124,7 +138,7 @@ async def cmd_status(message: types.Message):
 
 # ---------------- MAIN ----------------
 async def main():
-    logging.info("🤖 TikTok Live Monitor Bot (yt-dlp) Started")
+    logging.info("🤖 TikTok Live Monitor Bot Started")
     await dp.start_polling(bot)
 
 
