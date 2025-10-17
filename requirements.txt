@@ -3,3 +3,4 @@ TikTokLive
 aiosqlite
 aiohttp
 requests
+yt-dlp
