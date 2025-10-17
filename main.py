@@ -64,7 +64,7 @@ async def start_realtime_monitor(username: str):
     async def on_connect(event: ConnectEvent):
         monitored_users[username]["method"] = "realtime"
         logging.info(f"🟢 Connected (real-time) to @{username}")
-        # Check immediately if live
+        # Immediate check (may print offline even if live just started)
         is_live = await check_live_status(username)
         monitored_users[username]["live"] = is_live
         if is_live:
