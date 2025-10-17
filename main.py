@@ -1,68 +1,84 @@
 #!/usr/bin/env python3
 """
-TikTok Live Monitor Bot
-- Monitors TikTok users by checking actual live JSON data
-- Fallback polling every 5 minutes
-- Sends Telegram notifications
+TikTok Live Monitor Bot (room_id method)
+- Uses yt-dlp to get room_id
+- Checks TikTok live API to detect actual live streams
+- Telegram notifications for ONLINE/OFFLINE
 """
 
 import os
 import asyncio
 import logging
 import json
-import re
+import subprocess
 import httpx
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
 # ---------------- CONFIG ----------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", 0))  # replace with your Telegram ID
-POLL_INTERVAL = 300  # seconds
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", 0))  # Replace with your Telegram ID
+POLL_INTERVAL = 300  # 5 minutes
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is required!")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-monitored_users = {}  # {username: {"live": False}}
+monitored_users = {}  # {username: {"live": False, "room_id": None}}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 
 # ---------------- HELPER FUNCTIONS ----------------
-async def check_live_status(username: str) -> bool:
-    """Check if a TikTok user is currently live by parsing page JSON."""
+def get_room_id(username: str) -> str | None:
+    """Use yt-dlp to get TikTok live room_id."""
     url = f"https://www.tiktok.com/@{username}"
     try:
+        result = subprocess.run(
+            ["yt-dlp", "-J", url],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        data = json.loads(result.stdout)
+        room_id = data.get("live_room", {}).get("room_id")
+        return room_id
+    except Exception as e:
+        logging.error(f"❌ Failed to get room_id for @{username}: {e}")
+        return None
+
+
+async def is_user_live(room_id: str) -> bool:
+    """Check TikTok live room API to see if user is live."""
+    if not room_id:
+        return False
+    url = f"https://api2.musical.ly/aweme/v1/live/room/{room_id}/?aid=1988"
+    try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
-            match = re.search(
-                r'<script id="SIGI_STATE" type="application/json">(.*?)</script>',
-                r.text
-            )
-            if not match:
-                return False
-            data = json.loads(match.group(1))
-            # Check actual live room info
-            live_info = data.get("LiveRoom", {})
-            if live_info:  # streaming info exists → live
-                return True
-            # Fallback: check isLive in UserModule
-            user_info = data.get("UserModule", {}).get("users", {}).get(username)
-            if user_info and user_info.get("isLive"):
-                return True
+            r = await client.get(url)
+            if r.status_code == 200:
+                data = r.json()
+                # live_status 2 = live, 4 = offline
+                return data.get("data", {}).get("status") == 2
             return False
     except Exception as e:
-        logging.error(f"❌ Error checking @{username}: {e}")
+        logging.error(f"❌ Failed to check live status for room {room_id}: {e}")
         return False
 
 
 async def polling_monitor(username: str):
     """Check live status every POLL_INTERVAL seconds."""
-    last_status = monitored_users[username].get("live", False)
+    user_data = monitored_users[username]
+    last_status = user_data.get("live", False)
+    room_id = user_data.get("room_id")
+
     while username in monitored_users:
-        is_live = await check_live_status(username)
+        if not room_id:
+            room_id = get_room_id(username)
+            monitored_users[username]["room_id"] = room_id
+
+        is_live = await is_user_live(room_id)
         if is_live != last_status:
             last_status = is_live
             monitored_users[username]["live"] = is_live
@@ -96,7 +112,8 @@ async def cmd_add(message: types.Message):
     if username in monitored_users:
         return await message.reply(f"⚠️ @{username} is already monitored.")
 
-    monitored_users[username] = {"live": False}
+    room_id = get_room_id(username)
+    monitored_users[username] = {"live": False, "room_id": room_id}
     await message.reply(f"⏳ Starting monitoring @{username}...")
     asyncio.create_task(polling_monitor(username))
     logging.info(f"👀 Started monitoring @{username}")
@@ -121,7 +138,10 @@ async def cmd_remove(message: types.Message):
 async def cmd_list(message: types.Message):
     if not monitored_users:
         return await message.reply("📭 No monitored users yet.")
-    msg = "\n".join([f"• @{u} ({'LIVE' if d['live'] else 'OFFLINE'})" for u, d in monitored_users.items()])
+    msg = "\n".join([
+        f"• @{u} ({'LIVE' if d['live'] else 'OFFLINE'})" 
+        for u, d in monitored_users.items()
+    ])
     await message.reply(f"📋 Monitored Accounts:\n{msg}")
 
 
@@ -138,7 +158,7 @@ async def cmd_status(message: types.Message):
 
 # ---------------- MAIN ----------------
 async def main():
-    logging.info("🤖 TikTok Live Monitor Bot Started")
+    logging.info("🤖 TikTok Live Monitor Bot (room_id method) Started")
     await dp.start_polling(bot)
 
 
