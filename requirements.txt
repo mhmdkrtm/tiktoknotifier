@@ -1,10 +1,4 @@
-tiktoklive
-requests
+aiogram
+TikTokLive
+aiosqlite
 aiohttp
-websockets
-python-telegram-bot
-gitpython
-telethon
-ffmpeg-python
-streamlink
-yt-dlp
