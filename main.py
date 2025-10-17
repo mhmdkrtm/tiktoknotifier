@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 TikTok Live Monitor Bot
-- Add/remove monitored TikTok usernames through Telegram
-- Detect live streams in real time (TikTokLive)
-- Fallback to periodic polling every 5 minutes if websocket fails
-- Sends Telegram alerts + prints clear console logs
+- Monitors TikTok users in real-time (TikTokLive)
+- Fallback to periodic polling every 5 minutes
+- Sends Telegram alerts
+- Fully compatible with latest TikTokLive library
 """
 
+import os
 import asyncio
 import logging
 import json
@@ -15,15 +16,17 @@ import httpx
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from TikTokLive import TikTokLiveClient
-from TikTokLive.events import ConnectEvent, LiveEndEvent, LiveStartEvent
+from TikTokLive.events import ConnectEvent, DisconnectEvent, LiveEndEvent
 
 # ---------------- CONFIG ----------------
-API_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-ADMIN_CHAT_ID = 123456789  # Replace with your Telegram ID
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Replace with your Telegram ID
 POLL_INTERVAL = 300  # 5 minutes
-# ----------------------------------------
 
-bot = Bot(token=API_TOKEN)
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is required!")
+
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 monitored_users = {}  # {username: {"live": bool, "method": "realtime"|"poll"}}
 
@@ -32,7 +35,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 # ---------------- HELPER FUNCTIONS ----------------
 async def check_live_status(username: str) -> bool:
-    """Fallback check — Scrape TikTok HTML and parse live state."""
+    """Fallback check — parse TikTok page JSON to determine live status."""
     url = f"https://www.tiktok.com/@{username}"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -60,43 +63,70 @@ async def start_realtime_monitor(username: str):
     @client.on(ConnectEvent)
     async def on_connect(event: ConnectEvent):
         monitored_users[username]["method"] = "realtime"
-        logging.info(f"🟢 Real-time connected: @{username}")
-
-    @client.on(LiveStartEvent)
-    async def on_live_start(event: LiveStartEvent):
-        monitored_users[username]["live"] = True
-        logging.info(f"✅ @{username} is now LIVE!")
-        await bot.send_message(ADMIN_CHAT_ID, f"🎥 @{username} has started a LIVE stream!")
+        logging.info(f"🟢 Connected (real-time) to @{username}")
+        # Check immediately if live
+        is_live = await check_live_status(username)
+        monitored_users[username]["live"] = is_live
+        if is_live:
+            logging.info(f"✅ @{username} is currently LIVE!")
+            if ADMIN_CHAT_ID:
+                await bot.send_message(ADMIN_CHAT_ID, f"🎥 @{username} is LIVE!")
+        else:
+            logging.info(f"⚪ @{username} is currently offline.")
+            if ADMIN_CHAT_ID:
+                await bot.send_message(ADMIN_CHAT_ID, f"⚪ @{username} is offline.")
 
     @client.on(LiveEndEvent)
     async def on_live_end(event: LiveEndEvent):
         monitored_users[username]["live"] = False
         logging.info(f"🔴 @{username} went offline.")
-        await bot.send_message(ADMIN_CHAT_ID, f"⚪ @{username} ended the live stream.")
+        if ADMIN_CHAT_ID:
+            await bot.send_message(ADMIN_CHAT_ID, f"⚪ @{username} ended the live stream.")
+
+    @client.on(DisconnectEvent)
+    async def on_disconnect(event: DisconnectEvent):
+        logging.warning(f"⚠️ @{username} disconnected. Switching to polling.")
+        monitored_users[username]["method"] = "poll"
+        asyncio.create_task(polling_monitor(username))
 
     try:
         await client.start()
     except Exception as e:
-        logging.warning(f"⚠️ Real-time failed for @{username}: {e}")
+        logging.warning(f"❌ Real-time failed for @{username}: {e}")
         monitored_users[username]["method"] = "poll"
-        # Start fallback polling instead
-        while True:
+        asyncio.create_task(polling_monitor(username))
+
+
+# ---------------- POLLING FALLBACK ----------------
+async def polling_monitor(username: str):
+    """Check live status every POLL_INTERVAL seconds."""
+    last_status = monitored_users[username].get("live", False)
+    while username in monitored_users:
+        try:
             is_live = await check_live_status(username)
-            if is_live and not monitored_users[username]["live"]:
-                monitored_users[username]["live"] = True
-                logging.info(f"✅ @{username} is LIVE (fallback)")
-                await bot.send_message(ADMIN_CHAT_ID, f"🎬 @{username} went LIVE (fallback mode)")
-            elif not is_live and monitored_users[username]["live"]:
-                monitored_users[username]["live"] = False
-                logging.info(f"🔴 @{username} went offline (fallback)")
-                await bot.send_message(ADMIN_CHAT_ID, f"⚪ @{username} went offline (fallback mode)")
-            await asyncio.sleep(POLL_INTERVAL)
+            if is_live != last_status:
+                last_status = is_live
+                monitored_users[username]["live"] = is_live
+                if is_live:
+                    logging.info(f"✅ @{username} went LIVE (polling)")
+                    if ADMIN_CHAT_ID:
+                        await bot.send_message(ADMIN_CHAT_ID, f"🎥 @{username} went LIVE (polling)")
+                else:
+                    logging.info(f"🔴 @{username} went offline (polling)")
+                    if ADMIN_CHAT_ID:
+                        await bot.send_message(ADMIN_CHAT_ID, f"⚪ @{username} went offline (polling)")
+        except Exception as e:
+            logging.error(f"❌ Polling error for @{username}: {e}")
+        await asyncio.sleep(POLL_INTERVAL)
 
 
 # ---------------- TELEGRAM COMMANDS ----------------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("👋 Welcome to TikTok Live Monitor!\nUse /add <username>, /remove <username>, /list, /status")
+    await message.answer(
+        "👋 Welcome to TikTok Live Monitor!\n"
+        "Use /add <username>, /remove <username>, /list, /status"
+    )
 
 
 @dp.message(Command("add"))
@@ -107,19 +137,13 @@ async def cmd_add(message: types.Message):
 
     username = args[1].replace("@", "").strip()
     if username in monitored_users:
-        return await message.reply(f"⚠️ @{username} is already being monitored.")
+        return await message.reply(f"⚠️ @{username} is already monitored.")
 
     monitored_users[username] = {"live": False, "method": None}
     await message.reply(f"⏳ Checking @{username}...")
-
-    try:
-        asyncio.create_task(start_realtime_monitor(username))
-        await asyncio.sleep(2)
-        logging.info(f"👀 Started monitoring @{username}")
-        await message.reply(f"✅ Monitoring started for @{username}")
-    except Exception as e:
-        logging.error(f"Error starting monitor for {username}: {e}")
-        await message.reply(f"❌ Failed to monitor @{username}")
+    asyncio.create_task(start_realtime_monitor(username))
+    logging.info(f"👀 Started monitoring @{username}")
+    await message.reply(f"✅ Monitoring started for @{username}")
 
 
 @dp.message(Command("remove"))
@@ -133,7 +157,7 @@ async def cmd_remove(message: types.Message):
         del monitored_users[username]
         await message.reply(f"🗑️ Stopped monitoring @{username}")
     else:
-        await message.reply(f"⚠️ @{username} is not being monitored.")
+        await message.reply(f"⚠️ @{username} is not monitored.")
 
 
 @dp.message(Command("list"))
@@ -141,7 +165,7 @@ async def cmd_list(message: types.Message):
     if not monitored_users:
         return await message.reply("📭 No monitored users yet.")
     msg = "\n".join([f"• @{u} ({'LIVE' if d['live'] else 'offline'})" for u, d in monitored_users.items()])
-    await message.reply(f"📋 **Monitored Accounts:**\n{msg}", parse_mode="Markdown")
+    await message.reply(f"📋 Monitored Accounts:\n{msg}")
 
 
 @dp.message(Command("status"))
@@ -156,9 +180,9 @@ async def cmd_status(message: types.Message):
     await message.reply("\n".join(reply_lines))
 
 
-# ---------------- MAIN LOOP ----------------
+# ---------------- MAIN ----------------
 async def main():
-    logging.info("🤖 TikTok Live Monitor Bot Started.")
+    logging.info("🤖 TikTok Live Monitor Bot Started")
     await dp.start_polling(bot)
 
 
