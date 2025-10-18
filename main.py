@@ -15,12 +15,18 @@ WAIT_FOR_LIVE = 300  # 5 minutes
 
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-# Restore rclone config
-rclone_conf_path = Path(os.getenv("RCLONE_CONFIG"))
-if not rclone_conf_path.exists():
-    print("⚠️ No RCLONE_CONFIG found. Exiting.")
+# ===== Write RCLONE_CONFIG to file =====
+rclone_conf_path = Path("/root/.config/rclone/rclone.conf")
+rclone_conf_path.parent.mkdir(parents=True, exist_ok=True)
+rclone_conf_content = os.getenv("RCLONE_CONFIG")
+if not rclone_conf_content:
+    print("⚠️ RCLONE_CONFIG env variable is empty. Exiting.")
     exit(1)
+with open(rclone_conf_path, "w") as f:
+    f.write(rclone_conf_content)
+print("✅ rclone.conf written successfully")
 
+# ===== Helper functions =====
 def run_cmd(cmd, capture_output=False):
     print(f"▶️ Running: {cmd}")
     return subprocess.run(cmd, shell=True, capture_output=capture_output, text=True)
@@ -38,6 +44,7 @@ def upload_to_drive(filepath):
     result = run_cmd(f"rclone move '{filepath}' {RCLONE_REMOTE} -v")
     return result.returncode == 0
 
+# ===== Main loop =====
 while True:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n⏰ Checking at {now}")
@@ -47,16 +54,20 @@ while True:
     filename = TMP_DIR / f"{TIKTOK_ACCOUNT}_{timestamp}.mp4"
 
     # Try yt-dlp first
-    success = run_cmd(f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} -o "{filename}" https://www.tiktok.com/@{TIKTOK_ACCOUNT}/live').returncode == 0
+    success = run_cmd(
+        f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} -o "{filename}" https://www.tiktok.com/@{TIKTOK_ACCOUNT}/live'
+    ).returncode == 0
 
     # If yt-dlp fails, try ffmpeg
     if not success:
         send_message("⚠️ yt-dlp failed, trying ffmpeg...")
-        success = run_cmd(f'ffmpeg -y -i https://www.tiktok.com/@{TIKTOK_ACCOUNT}/live -c copy "{filename}"').returncode == 0
+        success = run_cmd(
+            f'ffmpeg -y -i https://www.tiktok.com/@{TIKTOK_ACCOUNT}/live -c copy "{filename}"'
+        ).returncode == 0
 
     if success:
         send_message(f"🎥 LIVE detected! Recording started: {filename.name}")
-        # Wait until recording finishes
+        # Wait until recording finishes (yt-dlp/ffmpeg handle stopping when stream ends)
         duration = get_video_length(filename)
         send_message(f"✅ Recording finished: {filename.name}\n⏱ Length: {duration}")
 
