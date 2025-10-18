@@ -1,121 +1,100 @@
-import os
 import asyncio
+import os
 import subprocess
-from pathlib import Path
 from TikTokLive import TikTokLiveClient
-import datetime
-import requests
+from TikTokLive.types.events import LiveStartEvent
+from TikTokLive.types.errors import FailedConnection
+from notify import send_message
 
-# ================= SETTINGS =================
-TMP_DIR = Path("/app/downloads")
-RCLONE_REMOTE = "gdrive:tiktok"
-WAIT_FOR_LIVE = 300  # seconds to wait for yt-dlp recording
-ACCOUNTS_FILE = "accounts.txt"
-# ============================================
-
-TMP_DIR.mkdir(parents=True, exist_ok=True)
-
-# ===== Environment variables =====
-TG_TOKEN = os.getenv("TG_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-RCLONE_CONFIG_CONTENT = os.getenv("RCLONE_CONFIG")
-if not (TG_TOKEN and CHAT_ID and RCLONE_CONFIG_CONTENT):
-    print("⚠️ TG_TOKEN, CHAT_ID, or RCLONE_CONFIG not set. Exiting.")
-    exit(1)
-
-# ===== Write rclone config =====
-rclone_conf_path = Path("/root/.config/rclone/rclone.conf")
-rclone_conf_path.parent.mkdir(parents=True, exist_ok=True)
-with open(rclone_conf_path, "w") as f:
-    f.write(RCLONE_CONFIG_CONTENT)
-print("✅ rclone.conf written successfully")
-
-# ===== Helper functions =====
-def send_message(message: str):
-    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": message})
-    except Exception as e:
-        print(f"⚠️ Failed to send Telegram message: {e}")
-
-def run_cmd(cmd):
-    print(f"▶️ Running: {cmd}")
-    result = subprocess.run(cmd, shell=True)
-    return result.returncode == 0
-
-def get_video_length(file_path):
-    try:
-        result = subprocess.run(
-            f'yt-dlp --print "%(duration_string)s" "{file_path}"',
-            shell=True,
-            capture_output=True,
-            text=True
-        )
-        duration = result.stdout.strip()
-        return duration if duration else "unknown"
-    except:
-        return "unknown"
-
-def upload_to_drive(filepath):
-    return run_cmd(f"rclone move '{filepath}' {RCLONE_REMOTE} -v")
-
-def read_accounts():
-    if not os.path.exists(ACCOUNTS_FILE):
-        print(f"{ACCOUNTS_FILE} not found!")
-        return []
-    with open(ACCOUNTS_FILE, "r") as f:
-        return [line.strip() for line in f if line.strip()]
-
-# ===== Recording function =====
-def record_live(account):
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = TMP_DIR / f"{account}_{timestamp}.mp4"
-
-    # Try yt-dlp first
-    success = run_cmd(f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} -o "{filename}" https://www.tiktok.com/@{account}/live')
-
-    # Fallback to ffmpeg
-    if not success:
-        send_message(f"⚠️ yt-dlp failed for {account}, trying ffmpeg...")
-        success = run_cmd(f'ffmpeg -y -i https://www.tiktok.com/@{account}/live -c copy "{filename}"')
-
-    if success:
-        send_message(f"🎥 LIVE detected for {account}! Recording started: {filename.name}")
-        duration = get_video_length(filename)
-        send_message(f"✅ Recording finished: {filename.name}\n⏱ Length: {duration}")
-
-        if upload_to_drive(filename):
-            send_message(f"☁️ Uploaded {filename.name} to Google Drive successfully.")
-            try:
-                filename.unlink()
-                print(f"🗑 Deleted local file {filename.name}")
-            except Exception as e:
-                print(f"⚠️ Failed to delete {filename.name}: {e}")
-        else:
-            send_message(f"⚠️ Upload failed for {filename.name}.")
+# Ensure Rclone config is written
+def write_rclone_config():
+    rclone_config = os.getenv("RCLONE_CONFIG")
+    if rclone_config:
+        config_path = "/root/.config/rclone/rclone.conf"
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w") as f:
+            f.write(rclone_config)
+        print("✅ rclone.conf written successfully")
     else:
-        send_message(f"❌ Both yt-dlp and ffmpeg failed for {account}.")
+        print("⚠️ RCLONE_CONFIG not set in environment variables.")
 
-# ===== TikTok Live listener =====
+# Record live stream using yt-dlp
+def record_live(account):
+    print(f"🎥 Starting recording for {account}...")
+    try:
+        subprocess.run(
+            [
+                "yt-dlp",
+                "--format", "bestvideo+bestaudio",
+                "--merge-output-format", "mp4",
+                "--output", f"downloads/{account}.mp4",
+                f"https://www.tiktok.com/@{account}/live"
+            ],
+            check=True
+        )
+        print(f"✅ Recording completed for {account}")
+        upload_to_gdrive(account)
+    except subprocess.CalledProcessError:
+        print(f"❌ yt-dlp failed, attempting with ffmpeg for {account}...")
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-i", f"https://www.tiktok.com/@{account}/live",
+                    "-c:v", "libx264",
+                    "-c:a", "aac",
+                    "-strict", "experimental",
+                    f"downloads/{account}.mp4"
+                ],
+                check=True
+            )
+            print(f"✅ Recording completed for {account} using ffmpeg")
+            upload_to_gdrive(account)
+        except subprocess.CalledProcessError:
+            print(f"❌ ffmpeg failed to record {account}")
+
+# Upload recorded video to Google Drive using rclone
+def upload_to_gdrive(account):
+    print(f"☁️ Uploading {account}.mp4 to Google Drive...")
+    try:
+        subprocess.run(
+            ["rclone", "copy", f"downloads/{account}.mp4", "gdrive:/TikTokLives/"],
+            check=True
+        )
+        print(f"✅ Upload completed for {account}")
+        cleanup(account)
+    except subprocess.CalledProcessError:
+        print(f"❌ Upload failed for {account}")
+
+# Clean up local files
+def cleanup(account):
+    print(f"🧹 Cleaning up local files for {account}...")
+    try:
+        os.remove(f"downloads/{account}.mp4")
+        print(f"✅ Cleanup completed for {account}")
+        send_message(f"✅ {account} live recording and upload completed successfully.")
+    except Exception as e:
+        print(f"❌ Cleanup failed for {account}: {e}")
+
+# Start listening for live events
 async def start_listener(account):
     client = TikTokLiveClient(unique_id=account)
 
-    @client.on("live_start")
+    @client.on(LiveStartEvent)
     async def on_live_start(event):
         send_message(f"🔔 {account} just went LIVE! Recording...")
-        # Run recording in a separate thread to not block async loop
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, record_live, account)
 
-    await client.run()
+    try:
+        await client.run()
+    except FailedConnection:
+        print(f"❌ Failed to connect to {account}'s live stream.")
 
-# ===== Main =====
+# Main function to start the listeners
 async def main():
-    accounts = read_accounts()
-    if not accounts:
-        print("No accounts to monitor. Exiting.")
-        return
-
+    accounts = ["@account1", "@account2"]  # Replace with your target TikTok accounts
+    write_rclone_config()
     tasks = [start_listener(account) for account in accounts]
     await asyncio.gather(*tasks)
 
