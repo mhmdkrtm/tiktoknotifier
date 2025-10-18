@@ -5,13 +5,13 @@ from datetime import datetime
 from pathlib import Path
 from notify import send_message
 
-# ========== SETTINGS ==========
-TIKTOK_ACCOUNTS = "x_o_533", "prensesa.cane", "yra8746"
+# ================= SETTINGS =================
+TIKTOK_ACCOUNTS = ["x_o_533", "prensesa.cane", "yra8746"]  # Add more usernames like ["x_o_533", "account2"]
 CHECK_INTERVAL = 600  # 10 minutes
 TMP_DIR = Path("/app/downloads")
 RCLONE_REMOTE = "gdrive:tiktok"
 WAIT_FOR_LIVE = 300  # 5 minutes
-# ==============================
+# ============================================
 
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -22,6 +22,7 @@ rclone_conf_content = os.getenv("RCLONE_CONFIG")
 if not rclone_conf_content:
     print("⚠️ RCLONE_CONFIG env variable is empty. Exiting.")
     exit(1)
+
 with open(rclone_conf_path, "w") as f:
     f.write(rclone_conf_content)
 print("✅ rclone.conf written successfully")
