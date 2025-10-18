@@ -67,7 +67,7 @@ async def monitor_account(username):
     client = TikTokLiveClient(unique_id=username)
     # Pass sessionid to access age-restricted lives
     if SESSION_ID:
-        client.web.set_session_id(SESSION_ID)
+        client.web.set_session(SESSION_ID)
 
     while True:
         try:
