@@ -9,22 +9,18 @@ RUN apt-get update && \
 # Set working directory
 WORKDIR /app
 
-# Copy project files
-COPY main.py notify.py accounts.txt requirements.txt ./
+# Copy Python files
+COPY main.py notify.py requirements.txt ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create downloads folder
+# Create download directory
 RUN mkdir -p /app/downloads
 
-# Rclone config path
+# Environment variable for rclone config
 ENV RCLONE_CONFIG=/root/.config/rclone/rclone.conf
 RUN mkdir -p /root/.config/rclone
 
-# Set Telegram variables (you'll override these in Railway environment)
-ENV TG_TOKEN=""
-ENV CHAT_ID=""
-
-# Start the script
+# Run the main script
 CMD ["python", "main.py"]
