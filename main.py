@@ -7,7 +7,7 @@ from pathlib import Path
 from notify import send_message
 
 # ================= SETTINGS =================
-TIKTOK_ACCOUNTS = ["x_o_533", "prensesa.cane", "yra8746"]  # up to 3 accounts
+ACCOUNTS_FILE = "accounts.txt"
 CHECK_INTERVAL = 600  # 10 minutes
 TMP_DIR = Path("/app/downloads")
 RCLONE_REMOTE = "gdrive:tiktok"
@@ -46,6 +46,13 @@ def upload_to_drive(filepath):
     result = run_cmd(f"rclone move '{filepath}' {RCLONE_REMOTE} -v")
     return result.returncode == 0
 
+def read_accounts():
+    if not os.path.exists(ACCOUNTS_FILE):
+        print(f"{ACCOUNTS_FILE} not found!")
+        return []
+    with open(ACCOUNTS_FILE, "r") as f:
+        return [line.strip() for line in f if line.strip()]
+
 # ===== Monitoring function per account =====
 def monitor_account(account):
     while True:
@@ -56,9 +63,9 @@ def monitor_account(account):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = TMP_DIR / f"{account}_{timestamp}.mp4"
 
-        # ===== Try yt-dlp first =====
+        # ===== Try yt-dlp first (without impersonation) =====
         success = run_cmd(
-            f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} --impersonate "Chrome-100" -o "{filename}" https://www.tiktok.com/@{account}/live'
+            f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} -o "{filename}" https://www.tiktok.com/@{account}/live'
         ).returncode == 0
 
         # ===== If yt-dlp fails, try ffmpeg =====
@@ -75,7 +82,6 @@ def monitor_account(account):
 
             if upload_to_drive(filename):
                 send_message(f"☁️ Uploaded {filename.name} to Google Drive successfully.")
-                # ===== Cleanup local file after upload =====
                 try:
                     filename.unlink()
                     print(f"🗑 Deleted local file {filename.name}")
@@ -89,10 +95,15 @@ def monitor_account(account):
         time.sleep(CHECK_INTERVAL)
 
 # ===== Start threads for each account =====
+accounts = read_accounts()
+if not accounts:
+    print("No accounts to monitor. Exiting.")
+    exit(1)
+
 threads = []
-for account in TIKTOK_ACCOUNTS:
+for account in accounts:
     t = threading.Thread(target=monitor_account, args=(account,))
-    t.daemon = True  # allows the program to exit even if threads are running
+    t.daemon = True
     t.start()
     threads.append(t)
 
