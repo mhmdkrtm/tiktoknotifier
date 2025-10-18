@@ -1,3 +1,4 @@
 TikTokLive==6.6.5
-yt-dlp
+yt-dlp[ffmpeg]
 requests
+rclone
