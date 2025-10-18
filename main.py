@@ -2,15 +2,16 @@ import os
 import asyncio
 import subprocess
 from pathlib import Path
-from notify import send_message
 from TikTokLive import TikTokLiveClient
 from TikTokLive.events import ConnectEvent, LiveEndEvent
+from TikTokLive.client.errors import UserOfflineError, AgeRestrictedError
+from notify import send_message
 
 # ================= SETTINGS =================
 ACCOUNTS_FILE = Path("accounts.txt")
 TMP_DIR = Path("/app/downloads")
-RCLONE_REMOTE = "gdrive:tiktok"
-WAIT_FOR_LIVE = 300  # seconds
+RCLONE_REMOTE = os.getenv("RCLONE_REMOTE", "gdrive:tiktok")
+WAIT_FOR_LIVE = 300  # seconds to wait for yt-dlp
 # ============================================
 
 TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -24,46 +25,37 @@ else:
         usernames = [line.strip() for line in f if line.strip()]
 
 if not usernames:
-    print("⚠️ No usernames found in accounts.txt. Exiting.")
+    print("⚠️ No accounts found in accounts.txt. Exiting.")
     exit(1)
-
-# ===== Write rclone config =====
-rclone_conf_path = Path("/root/.config/rclone/rclone.conf")
-rclone_conf_path.parent.mkdir(parents=True, exist_ok=True)
-rclone_conf_content = os.getenv("RCLONE_CONFIG")
-if not rclone_conf_content:
-    print("⚠️ RCLONE_CONFIG env variable is empty. Exiting.")
-    exit(1)
-
-with open(rclone_conf_path, "w") as f:
-    f.write(rclone_conf_content)
-print("✅ rclone.conf written successfully")
 
 # ===== Helper functions =====
 def run_cmd(cmd, capture_output=False):
     print(f"▶️ Running: {cmd}")
     return subprocess.run(cmd, shell=True, capture_output=capture_output, text=True)
 
-async def record_live(username: str):
-    timestamp = asyncio.get_running_loop().time()
-    filename = TMP_DIR / f"{username}_{int(timestamp)}.mp4"
+def upload_to_drive(filepath):
+    result = run_cmd(f"rclone move '{filepath}' {RCLONE_REMOTE} -v")
+    return result.returncode == 0
+
+async def record_live(username: str, room_url: str):
+    timestamp = Path(username + "_" + asyncio.get_event_loop().time().__str__())
+    filename = TMP_DIR / f"{username}_{int(asyncio.get_event_loop().time())}.mp4"
 
     # Try yt-dlp first
-    result = run_cmd(
-        f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} -o "{filename}" https://www.tiktok.com/@{username}/live'
-    )
+    cmd_yt = f'yt-dlp -o "{filename}" {room_url}'
+    success = run_cmd(cmd_yt).returncode == 0
 
-    if result.returncode != 0:
+    # Fallback to ffmpeg
+    if not success:
         send_message(f"⚠️ yt-dlp failed for {username}, trying ffmpeg...")
-        result = run_cmd(
-            f'ffmpeg -y -i https://www.tiktok.com/@{username}/live -c copy "{filename}"'
-        )
+        cmd_ff = f'ffmpeg -y -i {room_url} -c copy "{filename}"'
+        success = run_cmd(cmd_ff).returncode == 0
 
-    if result.returncode == 0:
-        send_message(f"🎥 Recording finished for {username}: {filename.name}")
+    if success:
+        send_message(f"🎥 Recording started for @{username}: {filename.name}")
+
         # Upload
-        upload_result = run_cmd(f"rclone move '{filename}' {RCLONE_REMOTE} -v")
-        if upload_result.returncode == 0:
+        if upload_to_drive(filename):
             send_message(f"☁️ Uploaded {filename.name} to Google Drive successfully.")
             try:
                 filename.unlink()
@@ -71,10 +63,9 @@ async def record_live(username: str):
             except Exception as e:
                 print(f"⚠️ Failed to delete {filename.name}: {e}")
         else:
-            send_message(f"⚠️ Upload failed for {filename.name}.")
+            send_message(f"❌ Upload failed for {filename.name}.")
     else:
-        send_message(f"❌ Recording failed for {username}.")
-
+        send_message(f"❌ Failed to record live for @{username}.")
 
 # ===== Listener per account =====
 async def start_listener(username: str):
@@ -82,30 +73,35 @@ async def start_listener(username: str):
 
     @client.on(ConnectEvent)
     async def on_connect(event: ConnectEvent):
-        print(f"✅ Connected to @{event.unique_id} (Room ID: {client.room_id})")
         try:
-            if await client.is_live():
+            is_live = await client.is_live()
+            if is_live:
                 send_message(f"🔴 @{username} is LIVE!")
-                await record_live(username)
+                room_url = f"https://www.tiktok.com/@{username}/live"
+                await record_live(username, room_url)
+            else:
+                print(f"⚪ @{username} connected but not live.")
         except Exception as e:
-            print(f"⚠️ Error checking live status for {username}: {e}")
+            print(f"⚠️ Error checking live for @{username}: {e}")
 
     @client.on(LiveEndEvent)
     async def on_live_end(event: LiveEndEvent):
         print(f"⚪ @{username} live ended.")
 
-    # Run client in background
-    loop = asyncio.get_running_loop()
-    loop.create_task(client.connect(fetch_room_info=True))
+    # Run client with exception handling
+    try:
+        await client.start(fetch_room_info=True)
+    except UserOfflineError:
+        print(f"⚪ @{username} is offline.")
+    except AgeRestrictedError:
+        print(f"⚠️ @{username} is age-restricted. Skipping.")
+    except Exception as e:
+        print(f"❌ Unexpected error for @{username}: {e}")
 
 # ===== Main =====
 async def main():
-    tasks = [start_listener(u) for u in usernames]
+    tasks = [start_listener(username) for username in usernames]
     await asyncio.gather(*tasks)
-
-    # Keep the script alive
-    while True:
-        await asyncio.sleep(60)
 
 if __name__ == "__main__":
     asyncio.run(main())
