@@ -9,8 +9,8 @@ RUN apt-get update && \
 # Set working directory
 WORKDIR /app
 
-# Copy Python files
-COPY main.py notify.py requirements.txt ./
+# Copy Python files + accounts.txt
+COPY main.py notify.py requirements.txt accounts.txt ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
