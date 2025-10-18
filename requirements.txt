@@ -2,3 +2,4 @@ TikTokLive==6.6.5
 yt-dlp[ffmpeg]
 requests
 rclone
+yt-dlp[impersonate]
