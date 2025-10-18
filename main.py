@@ -6,7 +6,7 @@ from pathlib import Path
 from notify import send_message
 
 # ========== SETTINGS ==========
-TIKTOK_ACCOUNT = "x_o_533", "prensesa.cane", "yra8746"
+TIKTOK_ACCOUNTS = "x_o_533", "prensesa.cane", "yra8746"
 CHECK_INTERVAL = 600  # 10 minutes
 TMP_DIR = Path("/app/downloads")
 RCLONE_REMOTE = "gdrive:tiktok"
