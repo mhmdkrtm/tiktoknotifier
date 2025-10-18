@@ -1,10 +1,16 @@
 # Base image
 FROM python:3.11-slim
 
-# Install system dependencies
+# Install system dependencies for yt-dlp impersonation + ffmpeg + rclone
 RUN apt-get update && \
-    apt-get install -y ffmpeg rclone curl && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+    ffmpeg \
+    rclone \
+    curl \
+    libcurl4-openssl-dev \
+    python3-pycurl \
+    ca-certificates \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
