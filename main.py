@@ -2,7 +2,7 @@ import asyncio
 import os
 import subprocess
 from TikTokLive import TikTokLiveClient
-from TikTokLive.types.events import LiveStartEvent
+from TikTokLive.events import LiveStartEvent
 from notify import send_message
 
 # Ensure Rclone config is written
