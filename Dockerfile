@@ -23,7 +23,7 @@ ENV RCLONE_CONFIG=/root/.config/rclone/rclone.conf
 RUN mkdir -p /root/.config/rclone
 
 # Set yt-dlp impersonation target globally
-ENV YT_DLP_IMPERSONATE="Chrome-131"
+ENV YT_DLP_IMPERSONATE="Chrome-100"
 
 # Run the main script
 CMD ["python", "main.py"]
