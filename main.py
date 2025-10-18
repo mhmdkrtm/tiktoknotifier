@@ -1,108 +1,109 @@
-import asyncio
 import os
+import asyncio
 import subprocess
+from pathlib import Path
 from TikTokLive import TikTokLiveClient
-from TikTokLive.events import ConnectEvent, DisconnectEvent, LiveEndEvent
+from TikTokLive.events import ConnectEvent
+from TikTokLive.client.errors import UserNotFoundError
 from notify import send_message
 
-DOWNLOAD_DIR = "/app/downloads"
-RCLONE_REMOTE = "gdrive:/TikTokLives/"
+# ========== CONFIG ==========
+ACCOUNTS_FILE = Path("accounts.txt")  # file with TikTok usernames
+TMP_DIR = Path("/app/downloads")      # temporary storage
+RCLONE_REMOTE = "gdrive:tiktok"       # rclone remote
+WAIT_FOR_LIVE = 5 * 60                # seconds to wait for live recording
+CHECK_INTERVAL = 600                   # seconds between checks
+# ============================
 
-# ===== RCLONE config =====
-def write_rclone_config():
-    rclone_config = os.getenv("RCLONE_CONFIG")
-    if not rclone_config:
-        print("⚠️ RCLONE_CONFIG not set")
+# Ensure TMP_DIR exists
+TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+# Write rclone config
+rclone_conf_path = Path("/root/.config/rclone/rclone.conf")
+rclone_conf_path.parent.mkdir(parents=True, exist_ok=True)
+rclone_conf_content = os.getenv("RCLONE_CONFIG")
+if not rclone_conf_content:
+    print("⚠️ RCLONE_CONFIG env variable is empty. Exiting.")
+    exit(1)
+with open(rclone_conf_path, "w") as f:
+    f.write(rclone_conf_content)
+print("✅ rclone.conf written successfully")
+
+
+def run_cmd(cmd: str, capture_output=False):
+    """Run shell command"""
+    print(f"▶️ Running: {cmd}")
+    return subprocess.run(cmd, shell=True, capture_output=capture_output, text=True)
+
+
+def upload_to_drive(filepath: Path):
+    """Move file to Google Drive using rclone"""
+    result = run_cmd(f"rclone move '{filepath}' {RCLONE_REMOTE} -v")
+    return result.returncode == 0
+
+
+async def monitor_account(username: str):
+    """Monitor a single TikTok account"""
+    client = TikTokLiveClient(unique_id=username)
+
+    # Try connecting to the account to see if it exists
+    try:
+        is_live = await client.is_live()
+    except UserNotFoundError:
+        print(f"⚠️ {username} cannot go live or does not exist. Skipping.")
         return
-    config_path = "/root/.config/rclone/rclone.conf"
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    with open(config_path, "w") as f:
-        f.write(rclone_config)
-    print("✅ rclone.conf written successfully")
 
-# ===== Record live =====
-def record_live(account):
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    filename = f"{DOWNLOAD_DIR}/{account}.mp4"
+    if not is_live:
+        print(f"ℹ️ {username} is currently offline.")
+        return
 
-    try:
-        subprocess.run([
-            "yt-dlp",
-            "--format", "bestvideo+bestaudio",
-            "--merge-output-format", "mp4",
-            "--output", filename,
-            f"https://www.tiktok.com/@{account}/live"
-        ], check=True)
-        print(f"✅ yt-dlp finished recording {account}")
-    except subprocess.CalledProcessError:
-        print(f"⚠️ yt-dlp failed for {account}, trying ffmpeg...")
-        try:
-            subprocess.run([
-                "ffmpeg",
-                "-i", f"https://www.tiktok.com/@{account}/live",
-                "-c:v", "libx264",
-                "-c:a", "aac",
-                filename
-            ], check=True)
-            print(f"✅ ffmpeg finished recording {account}")
-        except subprocess.CalledProcessError:
-            print(f"❌ Both yt-dlp and ffmpeg failed for {account}")
-            return
+    send_message(f"🎥 {username} is LIVE! Starting recording...")
+    timestamp = asyncio.get_event_loop().time()
+    filename = TMP_DIR / f"{username}_{int(timestamp)}.mp4"
 
-    upload_to_gdrive(filename, account)
+    # Try yt-dlp first
+    result = run_cmd(
+        f'yt-dlp -o "{filename}" https://www.tiktok.com/@{username}/live', capture_output=True
+    )
+    success = result.returncode == 0
 
-# ===== Upload and cleanup =====
-def upload_to_gdrive(file_path, account):
-    try:
-        subprocess.run([
-            "rclone", "copy", file_path, RCLONE_REMOTE
-        ], check=True)
-        print(f"☁️ Uploaded {account} successfully")
-        cleanup(file_path, account)
-    except subprocess.CalledProcessError:
-        print(f"❌ Failed to upload {account}")
+    # If yt-dlp fails, fallback to ffmpeg
+    if not success:
+        send_message(f"⚠️ yt-dlp failed for {username}, trying ffmpeg...")
+        result = run_cmd(
+            f'ffmpeg -y -i https://www.tiktok.com/@{username}/live -c copy "{filename}"', capture_output=True
+        )
+        success = result.returncode == 0
 
-def cleanup(file_path, account):
-    try:
-        os.remove(file_path)
-        print(f"🗑 Deleted {account} locally")
-        send_message(f"✅ {account} live recording and upload completed successfully")
-    except Exception as e:
-        print(f"⚠️ Failed to delete {account}: {e}")
+    if success:
+        send_message(f"✅ Recording finished: {filename.name}")
+        if upload_to_drive(filename):
+            send_message(f"☁️ Uploaded {filename.name} to Google Drive successfully.")
+            try:
+                filename.unlink()
+                print(f"🗑 Deleted local file {filename.name}")
+            except Exception as e:
+                print(f"⚠️ Failed to delete {filename.name}: {e}")
+        else:
+            send_message(f"❌ Upload failed for {filename.name}.")
+    else:
+        send_message(f"❌ Recording failed for {username}.")
 
-# ===== Listener per account =====
-async def start_listener(account):
-    client = TikTokLiveClient(unique_id=account)
 
-    @client.on(ConnectEvent)
-    async def on_connect(event: ConnectEvent):
-        print(f"🔌 Connected to {account} live stream (Room ID: {client.room_id})")
-
-    @client.on(DisconnectEvent)
-    async def on_disconnect(event: DisconnectEvent):
-        print(f"❌ Disconnected from {account}")
-
-    @client.on(LiveEndEvent)
-    async def on_live_end(event: LiveEndEvent):
-        print(f"⏹ Live ended for {account}")
-
-    # Check if live first
-    if await client.is_live():
-        send_message(f"🔔 {account} is LIVE! Recording now...")
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, record_live, account)
-
-    try:
-        await client.start()  # async non-blocking
-    except Exception as e:
-        print(f"❌ Error connecting to {account}: {e}")
-
-# ===== Main =====
 async def main():
-    write_rclone_config()
-    accounts = ["account1", "account2"]  # Replace with your TikTok accounts
-    tasks = [start_listener(account) for account in accounts]
-    await asyncio.gather(*tasks)
+    """Main loop to check all accounts periodically"""
+    if not ACCOUNTS_FILE.exists():
+        print(f"⚠️ {ACCOUNTS_FILE} not found. Exiting.")
+        return
+
+    usernames = [line.strip() for line in ACCOUNTS_FILE.read_text().splitlines() if line.strip()]
+
+    while True:
+        tasks = [monitor_account(username) for username in usernames]
+        await asyncio.gather(*tasks)
+        print(f"⏱ Sleeping for {CHECK_INTERVAL} seconds before next check...")
+        await asyncio.sleep(CHECK_INTERVAL)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
