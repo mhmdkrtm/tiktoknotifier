@@ -9,21 +9,18 @@ RUN apt-get update && \
 # Set working directory
 WORKDIR /app
 
-# Copy Python files
-COPY main.py notify.py requirements.txt ./
+# Copy project files
+COPY main.py notify.py accounts.txt requirements.txt ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create download directory
+# Create downloads folder
 RUN mkdir -p /app/downloads
 
-# Environment variable for rclone config
+# Rclone config path
 ENV RCLONE_CONFIG=/root/.config/rclone/rclone.conf
 RUN mkdir -p /root/.config/rclone
 
-# Set yt-dlp impersonation target globally
-ENV YT_DLP_IMPERSONATE="Chrome-100"
-
-# Run the main script
+# Run the script
 CMD ["python", "main.py"]
