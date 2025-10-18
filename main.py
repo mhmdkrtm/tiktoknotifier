@@ -7,7 +7,7 @@ from pathlib import Path
 from notify import send_message
 
 # ================= SETTINGS =================
-TIKTOK_ACCOUNTS = ["x_o_533", "prensesa.cane", "yra8746"]  # up to 3 accounts
+TIKTOK_ACCOUNTS = ["x_o_533", "account2", "account3"]  # up to 3 accounts
 CHECK_INTERVAL = 600  # 10 minutes
 TMP_DIR = Path("/app/downloads")
 RCLONE_REMOTE = "gdrive:tiktok"
@@ -56,16 +56,16 @@ def monitor_account(account):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = TMP_DIR / f"{account}_{timestamp}.mp4"
 
-        # Try yt-dlp first
+        # ===== Try ffmpeg first =====
         success = run_cmd(
-            f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} -o "{filename}" https://www.tiktok.com/@{account}/live'
+            f'ffmpeg -y -i https://www.tiktok.com/@{account}/live -c copy "{filename}"'
         ).returncode == 0
 
-        # If yt-dlp fails, try ffmpeg
+        # ===== If ffmpeg fails, try yt-dlp =====
         if not success:
-            send_message(f"⚠️ yt-dlp failed for {account}, trying ffmpeg...")
+            send_message(f"⚠️ ffmpeg failed for {account}, trying yt-dlp...")
             success = run_cmd(
-                f'ffmpeg -y -i https://www.tiktok.com/@{account}/live -c copy "{filename}"'
+                f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} --impersonate "chrome" -o "{filename}" https://www.tiktok.com/@{account}/live'
             ).returncode == 0
 
         if success:
@@ -84,7 +84,7 @@ def monitor_account(account):
             else:
                 send_message(f"⚠️ Upload failed for {filename.name}.")
         else:
-            send_message(f"❌ Both yt-dlp and ffmpeg failed for {account}. Retrying in {CHECK_INTERVAL // 60} min.")
+            send_message(f"❌ Both ffmpeg and yt-dlp failed for {account}. Retrying in {CHECK_INTERVAL // 60} min.")
 
         time.sleep(CHECK_INTERVAL)
 
