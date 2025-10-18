@@ -58,7 +58,7 @@ def monitor_account(account):
 
         # ===== Try yt-dlp first =====
         success = run_cmd(
-            f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} --impersonate "Chrome-131" -o "{filename}" https://www.tiktok.com/@{account}/live'
+            f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} --impersonate "Chrome-100" -o "{filename}" https://www.tiktok.com/@{account}/live'
         ).returncode == 0
 
         # ===== If yt-dlp fails, try ffmpeg =====
