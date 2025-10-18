@@ -50,32 +50,33 @@ while True:
     print(f"\n⏰ Checking at {now}")
     send_message(f"🔎 Checking TikTok LIVE for {TIKTOK_ACCOUNT} at {now}...")
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = TMP_DIR / f"{TIKTOK_ACCOUNT}_{timestamp}.mp4"
-
-    # Try yt-dlp first
-    success = run_cmd(
-        f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} -o "{filename}" https://www.tiktok.com/@{TIKTOK_ACCOUNT}/live'
-    ).returncode == 0
-
-    # If yt-dlp fails, try ffmpeg
-    if not success:
-        send_message("⚠️ yt-dlp failed, trying ffmpeg...")
+    for account in TIKTOK_ACCOUNTS:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = TMP_DIR / f"{account}_{timestamp}.mp4"
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = TMP_DIR / f"{TIKTOK_ACCOUNT}_{timestamp}.mp4"
+        # Try yt-dlp first
         success = run_cmd(
-            f'ffmpeg -y -i https://www.tiktok.com/@{TIKTOK_ACCOUNT}/live -c copy "{filename}"'
+        f'yt-dlp --wait-for-video {WAIT_FOR_LIVE} -o "{filename}" https://www.tiktok.com/@{TIKTOK_ACCOUNT}/live'
         ).returncode == 0
-
-    if success:
-        send_message(f"🎥 LIVE detected! Recording started: {filename.name}")
-        # Wait until recording finishes (yt-dlp/ffmpeg handle stopping when stream ends)
-        duration = get_video_length(filename)
-        send_message(f"✅ Recording finished: {filename.name}\n⏱ Length: {duration}")
-
-        if upload_to_drive(filename):
-            send_message(f"☁️ Uploaded {filename.name} to Google Drive successfully.")
-        else:
-            send_message(f"⚠️ Upload failed for {filename.name}.")
-    else:
-        send_message("❌ Both yt-dlp and ffmpeg failed. Retrying in 10 minutes.")
+        # If yt-dlp fails, try ffmpeg
+        if not success:
+            send_message("⚠️ yt-dlp failed, trying ffmpeg...")
+            success = run_cmd(
+            f'ffmpeg -y -i https://www.tiktok.com/@{TIKTOK_ACCOUNT}/live -c copy "{filename}"'
+            ).returncode == 0
+            if success:
+                send_message(f"🎥 LIVE detected! Recording started: {filename.name}")
+                # Wait until recording finishes (yt-dlp/ffmpeg handle stopping when stream ends)
+                duration = get_video_length(filename)
+                send_message(f"✅ Recording finished: {filename.name}\n⏱ Length: {duration}")
+                
+                if upload_to_drive(filename):
+                    send_message(f"☁️ Uploaded {filename.name} to Google Drive successfully.")
+                else:
+                    send_message(f"⚠️ Upload failed for {filename.name}.")
+            else:
+                send_message("❌ Both yt-dlp and ffmpeg failed. Retrying in 10 minutes.")
 
     time.sleep(CHECK_INTERVAL)
