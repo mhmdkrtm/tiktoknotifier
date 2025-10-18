@@ -1,12 +1,13 @@
 import os
 import time
 import subprocess
+import threading
 from datetime import datetime
 from pathlib import Path
 from notify import send_message
 
 # ================= SETTINGS =================
-TIKTOK_ACCOUNTS = ["x_o_533", "prensesa.cane", "yra8746"]  # Add more usernames like ["x_o_533", "account2"]
+TIKTOK_ACCOUNTS = ["x_o_533", "account2", "account3"]  # up to 3 accounts
 CHECK_INTERVAL = 600  # 10 minutes
 TMP_DIR = Path("/app/downloads")
 RCLONE_REMOTE = "gdrive:tiktok"
@@ -45,13 +46,13 @@ def upload_to_drive(filepath):
     result = run_cmd(f"rclone move '{filepath}' {RCLONE_REMOTE} -v")
     return result.returncode == 0
 
-# ===== Main loop =====
-while True:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n⏰ Checking at {now}")
-    send_message(f"🔎 Checking TikTok LIVE for accounts: {', '.join(TIKTOK_ACCOUNTS)} at {now}...")
+# ===== Monitoring function per account =====
+def monitor_account(account):
+    while True:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n⏰ Checking {account} at {now}")
+        send_message(f"🔎 Checking TikTok LIVE for {account} at {now}...")
 
-    for account in TIKTOK_ACCOUNTS:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = TMP_DIR / f"{account}_{timestamp}.mp4"
 
@@ -74,9 +75,27 @@ while True:
 
             if upload_to_drive(filename):
                 send_message(f"☁️ Uploaded {filename.name} to Google Drive successfully.")
+                # ===== Cleanup local file after upload =====
+                try:
+                    filename.unlink()
+                    print(f"🗑 Deleted local file {filename.name}")
+                except Exception as e:
+                    print(f"⚠️ Failed to delete {filename.name}: {e}")
             else:
                 send_message(f"⚠️ Upload failed for {filename.name}.")
         else:
             send_message(f"❌ Both yt-dlp and ffmpeg failed for {account}. Retrying in {CHECK_INTERVAL // 60} min.")
 
-    time.sleep(CHECK_INTERVAL)
+        time.sleep(CHECK_INTERVAL)
+
+# ===== Start threads for each account =====
+threads = []
+for account in TIKTOK_ACCOUNTS:
+    t = threading.Thread(target=monitor_account, args=(account,))
+    t.daemon = True  # allows the program to exit even if threads are running
+    t.start()
+    threads.append(t)
+
+# ===== Keep main thread alive =====
+while True:
+    time.sleep(60)
