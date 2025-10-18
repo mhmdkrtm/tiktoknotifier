@@ -1,16 +1,12 @@
-# Use the official Python base image
 FROM python:3.11-slim
 
-# Set the working directory in the container
+# Install dependencies
+RUN apt update && apt install -y ffmpeg curl && \
+    pip install -U yt-dlp rclone && \
+    mkdir -p /app/records /root/.config/rclone
+
 WORKDIR /app
+COPY record.sh .
+RUN chmod +x record.sh
 
-# Copy the requirements file and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of the application code
-COPY bot.py .
-COPY followed_users.json .
-
-# Command to run the bot
-CMD ["python", "bot.py"]
+CMD ["bash", "record.sh"]
