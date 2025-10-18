@@ -22,5 +22,9 @@ RUN mkdir -p /app/downloads
 ENV RCLONE_CONFIG=/root/.config/rclone/rclone.conf
 RUN mkdir -p /root/.config/rclone
 
-# Run the script
+# Set Telegram variables (you'll override these in Railway environment)
+ENV TG_TOKEN=""
+ENV CHAT_ID=""
+
+# Start the script
 CMD ["python", "main.py"]
